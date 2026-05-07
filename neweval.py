@@ -95,15 +95,10 @@ def evaluate(model, data, iterations, acc_steps, batch_size, sequence_length, di
     avg_depth_list = []
 
     # NEW: Diagnostic metric accumulators    
+    diag_accumulators = defaultdict(list)
     b_sim_list, v_in_list, v_out_list = [], [], []
-    macro_rep_entropy_list = []
-    macro_budget_list = []
-    macro_in_entropy_list = []
-    macro_same_pos_list = []
-    
-    stepwise_cos_dist = {}  
-    stepwise_var = {}
-    # NEW DIAGNOSTIC METRIC ACCUMULATORS END
+    stepwise_cos_dist = defaultdict(list)
+    stepwise_var = defaultdict(list)    # NEW DIAGNOSTIC METRIC ACCUMULATORS END
 
     seq_length = extra_args.eval_seq_length or extra_args.sequence_length
     with torch.no_grad():
@@ -157,40 +152,22 @@ def evaluate(model, data, iterations, acc_steps, batch_size, sequence_length, di
             
             d_metrics = outputs.get('diag_metrics', {})
             if d_metrics:
-                if 'macro_rep_entropy' in d_metrics: macro_rep_entropy_list.append(d_metrics['macro_rep_entropy'])
-                if 'macro_budget' in d_metrics: macro_budget_list.append(d_metrics['macro_budget'])
-                if 'macro_in_entropy' in d_metrics: macro_in_entropy_list.append(d_metrics['macro_in_entropy'])
-                if 'macro_same_pos' in d_metrics: macro_same_pos_list.append(d_metrics['macro_same_pos'])
+                for k, v in d_metrics.items():
+                    # Skip large tensor heatmaps/logit lenses for the quantitative average
+                    if k not in ['logit_lens', 'appendix_f_heatmap']: 
+                        diag_accumulators[k].append(v)
             # ----------------------------------------------------
 
         t1 = time.time()
         dt = t1 - t0
         eval_per_batch_time = dt * 1000 / len(acc_list)
 
-    stats['val_acc'] = torch.as_tensor(acc_list).mean().item()
-    stats['val_loss'] = torch.as_tensor(loss_list_val).mean().item()
-    stats['val_perplexity'] = 2.71828 ** stats['val_loss']
-    stats['eval_per_batch_time'] = eval_per_batch_time
-    if avg_depth_list:
-        stats['average_depth'] = torch.as_tensor(avg_depth_list).float().mean().item()
-    if stepwise_cos_dist:
-        for key, val in stepwise_cos_dist.items():
-            stats[f'diag/{key}'] = np.mean(val)
-    if stepwise_var:
-        for key, val in stepwise_var.items():
-            stats[f'diag/{key}'] = np.mean(val)
-    
-    # --- NEW: Average the diagnostic metrics into stats ---
-    stats['diag/b_sim'] = np.mean(b_sim_list) if b_sim_list else 0.0
-    stats['diag/v_in'] = np.mean(v_in_list) if v_in_list else 0.0
-    stats['diag/v_out'] = np.mean(v_out_list) if v_out_list else 0.0
-    stats['diag/macro_rep_entropy'] = np.mean(macro_rep_entropy_list) if macro_rep_entropy_list else 0.0
-
-    
-    if macro_budget_list: stats['diag/macro_budget'] = np.mean(macro_budget_list, axis=0)
-    if macro_in_entropy_list: stats['diag/macro_in_entropy'] = np.mean(macro_in_entropy_list, axis=0)
-    if macro_same_pos_list: stats['diag/macro_same_pos'] = np.mean(macro_same_pos_list, axis=0)
-    # ------------------------------------------------------
+    d_metrics = outputs.get('diag_metrics', {})
+            if d_metrics:
+                for k, v in d_metrics.items():
+                    # Skip large tensor heatmaps/logit lenses for the quantitative average
+                    if k not in ['logit_lens', 'appendix_f_heatmap']: 
+                        diag_accumulators[k].append(v)
 
     return stats
 

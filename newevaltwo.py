@@ -154,11 +154,59 @@ def evaluate(model, data, iterations, acc_steps, batch_size, sequence_length, di
             
             d_metrics = outputs.get('diag_metrics', {})
             if d_metrics:
+                # 1. Process standard metrics (macro, etc)
                 for k, v in d_metrics.items():
                     if k.startswith('jsd') or k.startswith('macro'):
-                        if k not in dynamic_diag_metrics:
-                            dynamic_diag_metrics[k] = []
+                        if k not in dynamic_diag_metrics: dynamic_diag_metrics[k] = []
                         dynamic_diag_metrics[k].append(v)
+                
+                # 2. Process Hidden States (Logit Lens)
+                hidden_states = d_metrics.get('hidden_states')
+                final_logits = outputs.get('logits') # [B, T, V] or [B, 1, V]
+                
+                if hidden_states and final_logits is not None:
+                    raw_model = distributed_backend.get_raw_model(model)
+                    final_probs = torch.nn.functional.softmax(final_logits, dim=-1)
+                    final_preds = final_logits.argmax(dim=-1) # [B, T] or [B, 1]
+                    
+                    for step_name, h in hidden_states.items():
+                        # Temporal Alignment
+                        if final_logits.shape[1] == 1:
+                            h = h[:, [-1], :] # Match the [B, 1, V] shape of final_logits
+                        
+                        # Project to Vocabulary
+                        with torch.no_grad():
+                            # Project: h -> LN -> Head
+                            step_logits = raw_model.lm_head(raw_model.transformer.ln_f(h))
+                            step_probs = torch.nn.functional.softmax(step_logits, dim=-1)
+                            
+                            # A. JSD / KL Divergence (Convergence Map)
+                            m = 0.5 * (step_probs + final_probs)
+                            jsd = 0.5 * torch.nn.functional.kl_div(m.log(), step_probs, reduction='batchmean') + \
+                                  0.5 * torch.nn.functional.kl_div(m.log(), final_probs, reduction='batchmean')
+                            
+                            jsd_key = f'jsd_to_final_{step_name}'
+                            if jsd_key not in dynamic_diag_metrics: dynamic_diag_metrics[jsd_key] = []
+                            dynamic_diag_metrics[jsd_key].append(jsd.item())
+                            
+                            # B. Confidence (Trajectory Map)
+                            # Get the probability of the *final* predicted token at this intermediate step
+                            # final_preds is [B, T], step_probs is [B, T, V]
+                            conf = torch.gather(step_probs, -1, final_preds.unsqueeze(-1)).mean().item()
+                            conf_key = f'conf_to_final_{step_name}'
+                            if conf_key not in dynamic_diag_metrics: dynamic_diag_metrics[conf_key] = []
+                            dynamic_diag_metrics[conf_key].append(conf)
+                            
+                            # C. Rank (Rank Map)
+                            # How many tokens have higher logits than the final chosen token?
+                            target_logits = torch.gather(step_logits, -1, final_preds.unsqueeze(-1)) # [B, T, 1]
+                            rank = (step_logits > target_logits).sum(dim=-1).float().mean().item()
+                            rank_key = f'rank_of_final_{step_name}'
+                            if rank_key not in dynamic_diag_metrics: dynamic_diag_metrics[rank_key] = []
+                            dynamic_diag_metrics[rank_key].append(rank)
+                            
+                            # Cleanup heavy tensors
+                            del step_logits, step_probs, m, target_logits
             # ----------------------------------------------------
 
         t1 = time.time()
@@ -199,6 +247,7 @@ def run_qualitative_sweep(model, device, type_ctx, save_dir):
     print("\n" + "="*50)
     print("Running Qualitative Logit Lens Sweep...")
     import tiktoken
+    import pickle
     tokenizer = tiktoken.get_encoding("gpt2")
     
     test_prompts = [
@@ -211,6 +260,13 @@ def run_qualitative_sweep(model, device, type_ctx, save_dir):
     model.eval()
     logit_lens_results = []
     
+    from distributed import single
+    # Helper to get the raw model
+    if hasattr(model, 'module'):
+        raw_model = model.module
+    else:
+        raw_model = model
+
     for i, prompt in enumerate(test_prompts):
         idx = torch.tensor(tokenizer.encode(prompt)).unsqueeze(0).to(device)
         
@@ -220,20 +276,58 @@ def run_qualitative_sweep(model, device, type_ctx, save_dir):
                 outputs = model(idx, get_logits=True, log_metrics=True)
                 
         d_metrics = outputs.get('diag_metrics', {})
-        ll_data = d_metrics.get('logit_lens', {})
+        hidden_states = d_metrics.get('hidden_states', {})
+        final_logits = outputs.get('logits') # [1, 1, V] since it's inference
         
-        if ll_data:
+        if hidden_states and final_logits is not None:
             print(f"  [+] Captured Logit Lens data for Prompt {i}")
-            # Package it up nicely for the plotter
+            
+            final_token_id = final_logits.argmax(dim=-1).item()
+            final_word = tokenizer.decode([final_token_id])
+            final_probs = torch.nn.functional.softmax(final_logits, dim=-1)
+            
+            step_data = {}
+            
+            for step_name, h in hidden_states.items():
+                # Focus on the last token for the trajectory map
+                h_last = h[:, [-1], :]
+                
+                # Project
+                s_logits = raw_model.lm_head(raw_model.transformer.ln_f(h_last))
+                s_probs = torch.nn.functional.softmax(s_logits, dim=-1)
+                
+                # 1. Trajectory Data (Top token & Confidence)
+                top_prob, top_idx = s_probs.max(dim=-1)
+                top_word = tokenizer.decode([top_idx.item()])
+                
+                # 2. Rank Data (Where is the final answer ranked?)
+                target_logit = s_logits[0, 0, final_token_id]
+                rank = (s_logits > target_logit).sum().item()
+                
+                # 3. KL Divergence (Convergence)
+                m = 0.5 * (s_probs + final_probs)
+                jsd = 0.5 * torch.nn.functional.kl_div(m.log(), s_probs, reduction='batchmean') + \
+                      0.5 * torch.nn.functional.kl_div(m.log(), final_probs, reduction='batchmean')
+
+                step_data[step_name] = {
+                    "top_word": top_word,
+                    "confidence": top_prob.item(),
+                    "rank": rank,
+                    "jsd": jsd.item(),
+                    "matches_final": top_idx.item() == final_token_id
+                }
+                
+                del s_logits, s_probs, m
+
             logit_lens_results.append({
                 "prompt_idx": i,
                 "prompt_text": prompt,
-                "input_tokens": [tokenizer.decode([t]) for t in idx[0].tolist()],
-                "logit_lens": ll_data, # Dictionary of tensors: {'h_begin': tensor, 'rep_1': tensor...}
+                "final_prediction": final_word,
+                "steps": step_data,
                 "appendix_f_heatmap": d_metrics.get('appendix_f_heatmap') 
             })
             
-    # Save the extracted data to disk so the plotting script can ingest it
+    # Save the extracted data
     save_path = os.path.join(save_dir, "logit_lens_data.pkl")
     with open(save_path, "wb") as f:
         pickle.dump(logit_lens_results, f)
@@ -292,6 +386,7 @@ def main(args):
 
     if distributed_backend.is_master_process():
         raw_model = distributed_backend.get_raw_model(model) 
+        # Using "." saves it directly to your SLURM RUN_DIR
         run_qualitative_sweep(raw_model, args.device, type_ctx, save_dir=".")
 
 

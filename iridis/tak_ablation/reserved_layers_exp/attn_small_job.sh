@@ -35,7 +35,7 @@
 
 N_GPUS=1          # Must match --gres=gpu:N above
 N_LAYER=12        # Paper uses 24 for Table 2 ablation
-N_REPEAT=5        # Number of block repeats
+N_REPEAT=15        # Number of block repeats
 ITERATIONS=40000  # Training steps
 BATCH_SIZE=4      # Per-GPU micro-batch (L4 24GB OOMs at 16 with 108 effective layers)
 ACC_STEPS=32      # Gradient accumulation (DDP halves: per-GPU=8, eff BS = 8*16 = 128)
@@ -107,7 +107,7 @@ echo "========================================="
 module load conda
 eval "$(conda shell.bash hook)"
 conda activate "$CONDA_ENV_PREFIX"
-EXPNAME="512_HIGH_SEQ_tak_cotformer_0_12x5_0_REAL_no_ln_WITH_metrics"
+EXPNAME="test_hello_512_HIGH_SEQ_tak_cotformer_0_12x15_0_REAL_no_ln_WITH_metrics"
 export WANDB_MODE=offline
 export WANDB_RESUME="allow"
 export WANDB_RUN_ID="RUN_40k_${EXPNAME}"

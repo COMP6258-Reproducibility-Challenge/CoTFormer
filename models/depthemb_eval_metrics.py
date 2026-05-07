@@ -529,29 +529,8 @@ class GPTBase(nn.Module):
             loss = None
             cross_entropy_loss = None
         logits = logits if get_logits else None
-        if log_metrics and not self.training and logits is not None:
-            # 1. Get Final Distribution
-            final_probs = F.softmax(logits, dim=-1) 
-            
-            # 2. Iterate through saved intermediate states
-            for step_name, saved_x in saved_hidden_states.items():
-                # Memory Optimization: Match the temporal slicing of the final logits
-                if targets is None:
-                    saved_x = saved_x[:, [-1], :] # Only compute JSD on the last token!
-                
-                # Project to vocabulary using ln_f
-                step_logits = self.lm_head(self.transformer.ln_f(saved_x))
-                step_probs = F.softmax(step_logits, dim=-1)
-                
-                # Calculate JSD (Symmetric, bounded) against final_probs
-                m = 0.5 * (step_probs + final_probs)
-                jsd = 0.5 * F.kl_div(m.log(), step_probs, reduction='batchmean') + \
-                        0.5 * F.kl_div(m.log(), final_probs, reduction='batchmean')
-                        
-                diag_metrics[f'jsd_to_final_{step_name}'] = jsd.item()
-                
-                # Explicitly free up the heavy VRAM tensors
-                del step_logits, step_probs, m
+        if log_metrics and not self.training:
+            diag_metrics['hidden_states'] = saved_hidden_states
 
         return {'logits': logits, 
                 'loss': loss, 
@@ -562,7 +541,6 @@ class GPTBase(nn.Module):
                 'var_outof': var_outof if not self.training else None,          #NEW 
                 'diag_metrics': diag_metrics if not self.training else None          #NEW 
                 }
-
     def clear_state(self):
         self.lm_cache.clear_state() # NOTICE that this clears the KV cache. and NOT the CoT cache.
 
