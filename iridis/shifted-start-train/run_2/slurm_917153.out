@@ -1,0 +1,350 @@
+Running SLURM prolog script on ecsai06
+===============================================================================
+Job started on Fri May  8 15:46:27 BST 2026
+Job ID          : 917153
+Job name        : shifted_start_cotformer
+WorkDir         : /iridisfs/home/tak1e25/CoTFormer
+Command         : /iridisfs/home/tak1e25/CoTFormer/iridis/shifted-start-train/job.sh
+Partition       : ecsstudents_l4
+Num hosts       : 1
+Num cores       : 16
+Num of tasks    : 1
+Hosts allocated : ecsai06
+Job Output Follows ...
+===============================================================================
+=========================================
+ CoTFormer Shifted-start Training
+ User:          tak1e25
+ Node:          ecsai06
+ CPUs:          16
+ GPUs:          1
+ Job ID:        917153
+ Task:          counting_samesymbol_shiftedstart3__tr25_te200__
+ Model:         fixed_cot_attn
+ Architecture:  12L (2->mid*3->1)
+ Iterations:    100
+ Eff. BS:       128
+ Checkpoint:    every 20 steps -> /scratch/ab3u21/exps
+ Data dir:      /scratch/ab3u21/datasets/rasp_primitives/counting_samesymbol_shiftedstart3__tr25_te200__
+ Run dir:       /home/tak1e25/CoTFormer/iridis/shifted-start-train/run_2
+ Started:       Fri May  8 15:46:29 BST 2026
+=========================================
+
+GPU Info:
+0, NVIDIA L4, 23034 MiB, 590.48.01
+
+Dataset files:
+total 297M
+-rw-r--r-- 1 tak1e25 fp 5.7M May  8 15:36 ood_test.txt
+-rw-r--r-- 1 tak1e25 fp 291M May  8 15:36 train.txt
+-rw-r--r-- 1 tak1e25 fp  53K May  8 15:36 val.txt
+
+Launching single-GPU shifted-start training
+Setting vocab_size to 203 for counting_samesymbol_shiftedstart3__tr25_te200__
+Setting dataset to counting_samesymbol_shiftedstart3__tr25_te200__
+Loading shifted-start task 'counting_samesymbol_shiftedstart3__tr25_te200__' from /scratch/ab3u21/datasets/rasp_primitives
+Num train examples: 999856
+Num val examples: 176
+number of parameters: 85.11M
+number of optimized parameters: 85.11M
+using fused AdamW: True
+
+Training shifted-start CoTFormer model=fixed_cot_attn
+{'config_format': 'base', 'ib_task': 'counting_samesymbol_shiftedstart3__tr25_te200__', 'ib_data_root': '/scratch/ab3u21/datasets/rasp_primitives', 'ib_eval_splits': ['val', 'ood_test'], 'ib_num_workers': 0, 'ib_eval_batch_size': None, 'ib_eval_max_batches': None, 'ib_save_every': 20, 'ib_log_every': 10, 'batch_size': 8, 'acc_steps': 16, 'seed': 0, 'data_seed': 0, 'device': device(type='cuda', index=0), 'iterations': 100, 'lr': 0.001, 'final_div_factor': 0.05, 'warmup_percent': 0.2, 'weight_decay': 0.1, 'beta1': 0.9, 'beta2': 0.95, 'scheduler': 'cos', 'opt': 'adamw', 'eval_freq': 10, 'results_base_folder': '/scratch/ab3u21/exps', 'grad_clip': 0.0, 'dataset': 'counting_samesymbol_shiftedstart3__tr25_te200__', 'vocab_size': 203, 'add_additional_space': False, 'data_dir': None, 'data_in_ram': False, 'model': 'fixed_cot_attn', 'use_pretrained': 'auto', 'dropout': 0.0, 'n_head': 12, 'n_layer': 12, 'n_embd': 768, 'sequence_length': 256, 'dtype': torch.bfloat16, 'bias': False, 'compile': False, 'rmsnorm_eps': 1e-05, 'multiple_of': 256, 'run_prefix': None, 'exp_name': 'shifted_start_counting_samesymbol_shiftedstart3__tr25_te200___fixed_cot_attn_12layer_3repeat_bs8x16_seqlen256', 'n_repeat': 3, 'min_repeat': 1, 'depth_random_method': 'uniform', 'depth_embedding': None, 'n_layer_begin': 2, 'n_layer_end': 1, 'mod_capacity_factor': 0.6, 'eval_length_factor': None, 'training_length_factor': None, 'disable_ln_mid': False, 'halt_threshold': 0.999, 'depth_predictor_loss_coef': 1.0, 'wandb': True, 'wandb_project': 'rcotformer', 'wandb_entity': None, 'eval_seq_prefix': 'Once upon a time', 'distributed_backend': None, 'positional_encoder': 'rotary', 'lm_cache': 'none', 'mem_cache_size': None, 'cache_topk': 1, 'cache_selection_method': 'per_token_and_head', 'cache_indexing_scheme': 'by_total', 'pos_jump_freq': None, 'pos_jump_schedule': None, 'eval_seq_length': None, 'eval_sample_size': None, 'attention_window_length': None, 'track_cache_attention': False, 'allow_cache_during_training': False, 'optimization_process': None, 'total_sequence_length': None, 'save_checkpoint_freq': None, 'remove_intermediary_checkpoints_at_end': False, 'act_penalty': 0.03, 'world_size': 1}
+
+{
+  "step": 0,
+  "eval": {
+    "val": {
+      "loss": 5.5004119006070225,
+      "acc": 0.004772727272727273,
+      "counting_acc": 0.004734848484848485,
+      "last_acc": 0.005681818181818182,
+      "unseen_len_acc": -1.0,
+      "num_examples": 176.0,
+      "num_batches": 22.0,
+      "average_depth": 30.0
+    },
+    "ood_test": {
+      "loss": 5.471601512358001,
+      "acc": 0.0076359039190897595,
+      "counting_acc": 0.007704081632653061,
+      "last_acc": 0.0,
+      "unseen_len_acc": 0.008538587848932676,
+      "num_examples": 4375.0,
+      "num_batches": 547.0,
+      "average_depth": 30.0
+    }
+  }
+}
+{"step": 10, "train_loss": 4.979550749063492}
+{
+  "step": 10,
+  "eval": {
+    "val": {
+      "loss": 4.778813903981989,
+      "acc": 0.02409090909090909,
+      "counting_acc": 0.024857954545454544,
+      "last_acc": 0.005681818181818182,
+      "unseen_len_acc": -1.0,
+      "num_examples": 176.0,
+      "num_batches": 22.0,
+      "average_depth": 30.0
+    },
+    "ood_test": {
+      "loss": 5.381330768194669,
+      "acc": 0.008293299620733248,
+      "counting_acc": 0.00836734693877551,
+      "last_acc": 0.0,
+      "unseen_len_acc": 0.00374384236453202,
+      "num_examples": 4375.0,
+      "num_batches": 547.0,
+      "average_depth": 30.0
+    }
+  }
+}
+{"step": 20, "train_loss": 3.591005876660347}
+{
+  "step": 20,
+  "eval": {
+    "val": {
+      "loss": 3.527215914292769,
+      "acc": 0.04727272727272727,
+      "counting_acc": 0.049005681818181816,
+      "last_acc": 0.005681818181818182,
+      "unseen_len_acc": -1.0,
+      "num_examples": 176.0,
+      "num_batches": 22.0,
+      "average_depth": 30.0
+    },
+    "ood_test": {
+      "loss": 5.838790289444723,
+      "acc": 0.010570922882427307,
+      "counting_acc": 0.01066530612244898,
+      "last_acc": 0.0,
+      "unseen_len_acc": 0.00013136288998357964,
+      "num_examples": 4375.0,
+      "num_batches": 547.0,
+      "average_depth": 30.0
+    }
+  }
+}
+{"step": 30, "train_loss": 3.1496923714876175}
+{
+  "step": 30,
+  "eval": {
+    "val": {
+      "loss": 3.104364351792769,
+      "acc": 0.07818181818181819,
+      "counting_acc": 0.0790719696969697,
+      "last_acc": 0.056818181818181816,
+      "unseen_len_acc": -1.0,
+      "num_examples": 176.0,
+      "num_batches": 22.0,
+      "average_depth": 30.0
+    },
+    "ood_test": {
+      "loss": 6.759770566846161,
+      "acc": 0.018963337547408345,
+      "counting_acc": 0.01913265306122449,
+      "last_acc": 0.0,
+      "unseen_len_acc": 0.0016420361247947454,
+      "num_examples": 4375.0,
+      "num_batches": 547.0,
+      "average_depth": 30.0
+    }
+  }
+}
+{"step": 40, "train_loss": 2.8870947062969208}
+{
+  "step": 40,
+  "eval": {
+    "val": {
+      "loss": 2.9014453020962803,
+      "acc": 0.11181818181818182,
+      "counting_acc": 0.11268939393939394,
+      "last_acc": 0.09090909090909091,
+      "unseen_len_acc": -1.0,
+      "num_examples": 176.0,
+      "num_batches": 22.0,
+      "average_depth": 30.0
+    },
+    "ood_test": {
+      "loss": 7.12517018117678,
+      "acc": 0.02685006321112516,
+      "counting_acc": 0.027089795918367347,
+      "last_acc": 0.0,
+      "unseen_len_acc": 0.0015763546798029558,
+      "num_examples": 4375.0,
+      "num_batches": 547.0,
+      "average_depth": 30.0
+    }
+  }
+}
+{"step": 50, "train_loss": 2.6330273300409317}
+{
+  "step": 50,
+  "eval": {
+    "val": {
+      "loss": 2.62379083850167,
+      "acc": 0.1506818181818182,
+      "counting_acc": 0.15364583333333334,
+      "last_acc": 0.07954545454545454,
+      "unseen_len_acc": -1.0,
+      "num_examples": 176.0,
+      "num_batches": 22.0,
+      "average_depth": 30.0
+    },
+    "ood_test": {
+      "loss": 7.508468620084104,
+      "acc": 0.03443742098609355,
+      "counting_acc": 0.034744897959183674,
+      "last_acc": 0.0,
+      "unseen_len_acc": 0.0006568144499178982,
+      "num_examples": 4375.0,
+      "num_batches": 547.0,
+      "average_depth": 30.0
+    }
+  }
+}
+{"step": 60, "train_loss": 2.475039079785347}
+{
+  "step": 60,
+  "eval": {
+    "val": {
+      "loss": 2.447246107188138,
+      "acc": 0.20136363636363636,
+      "counting_acc": 0.20478219696969696,
+      "last_acc": 0.11931818181818182,
+      "unseen_len_acc": -1.0,
+      "num_examples": 176.0,
+      "num_batches": 22.0,
+      "average_depth": 30.0
+    },
+    "ood_test": {
+      "loss": 7.947639633140355,
+      "acc": 0.04627458912768647,
+      "counting_acc": 0.04668775510204082,
+      "last_acc": 0.0,
+      "unseen_len_acc": 0.0011822660098522167,
+      "num_examples": 4375.0,
+      "num_batches": 547.0,
+      "average_depth": 30.0
+    }
+  }
+}
+{"step": 70, "train_loss": 2.3049560338258743}
+{
+  "step": 70,
+  "eval": {
+    "val": {
+      "loss": 2.278029116717252,
+      "acc": 0.30704545454545457,
+      "counting_acc": 0.3098958333333333,
+      "last_acc": 0.23863636363636365,
+      "unseen_len_acc": -1.0,
+      "num_examples": 176.0,
+      "num_batches": 22.0,
+      "average_depth": 30.0
+    },
+    "ood_test": {
+      "loss": 8.320408298502892,
+      "acc": 0.0721597977243995,
+      "counting_acc": 0.07280408163265306,
+      "last_acc": 0.0,
+      "unseen_len_acc": 0.002889983579638752,
+      "num_examples": 4375.0,
+      "num_batches": 547.0,
+      "average_depth": 30.0
+    }
+  }
+}
+{"step": 80, "train_loss": 2.1199462711811066}
+{
+  "step": 80,
+  "eval": {
+    "val": {
+      "loss": 2.108957729556344,
+      "acc": 0.3902272727272727,
+      "counting_acc": 0.39417613636363635,
+      "last_acc": 0.29545454545454547,
+      "unseen_len_acc": -1.0,
+      "num_examples": 176.0,
+      "num_batches": 22.0,
+      "average_depth": 30.0
+    },
+    "ood_test": {
+      "loss": 8.13294645985912,
+      "acc": 0.09027357774968395,
+      "counting_acc": 0.0910795918367347,
+      "last_acc": 0.0,
+      "unseen_len_acc": 0.002101806239737274,
+      "num_examples": 4375.0,
+      "num_batches": 547.0,
+      "average_depth": 30.0
+    }
+  }
+}
+{"step": 90, "train_loss": 1.9561401307582855}
+{
+  "step": 90,
+  "eval": {
+    "val": {
+      "loss": 1.9807705716653303,
+      "acc": 0.4415909090909091,
+      "counting_acc": 0.44176136363636365,
+      "last_acc": 0.4375,
+      "unseen_len_acc": -1.0,
+      "num_examples": 176.0,
+      "num_batches": 22.0,
+      "average_depth": 30.0
+    },
+    "ood_test": {
+      "loss": 7.473748453792314,
+      "acc": 0.10588925410872313,
+      "counting_acc": 0.10683469387755103,
+      "last_acc": 0.0,
+      "unseen_len_acc": 0.005911330049261084,
+      "num_examples": 4375.0,
+      "num_batches": 547.0,
+      "average_depth": 30.0
+    }
+  }
+}
+{"step": 100, "train_loss": 1.8495483472943306}
+[1;34mwandb[0m: 
+[1;34mwandb[0m: You can sync this run to the cloud by running:
+[1;34mwandb[0m: [1mwandb sync /scratch/ab3u21/.cache/wandb/wandb/offline-run-20260508_154654-cxrinnlh[0m
+[1;34mwandb[0m: Find logs at: [1;35m../../../scratch/ab3u21/.cache/wandb/wandb/offline-run-20260508_154654-cxrinnlh/logs[0m
+=========================================
+ Training finished: Fri May  8 16:00:05 BST 2026
+ Exit code: 0
+
+ Checkpoints: /scratch/ab3u21/exps/counting_samesymbol_shiftedstart3__tr25_te200__/fixed_cot_attn/
+
+ If training incomplete, resubmit:
+   bash iridis/shifted-start-train/job.sh
+
+ After training completes, sync WandB:
+   wandb sync /scratch/ab3u21/.cache/wandb/<offline-run-*>
+=========================================
+==============================================================================
+Running epilogue script on ecsai06.
+
+Submit time  : 2026-05-08T15:46:24
+Start time   : 2026-05-08T15:46:25
+End time     : 2026-05-08T16:00:06
+Elapsed time : 00:13:41 (Timelimit=1-00:00:00)
+
+Job ID: 917153
+Cluster: iridis_x
+User/Group: tak1e25/fp
+State: COMPLETED (exit code 0)
+Nodes: 1
+Cores per node: 16
+CPU Utilized: 00:31:21
+CPU Efficiency: 14.32% of 03:38:56 core-walltime
+Job Wall-clock time: 00:13:41
+Memory Utilized: 1004.48 MB
+Memory Efficiency: 0.77% of 128.00 GB (128.00 GB/node)
+
