@@ -1,6 +1,7 @@
 import json
 import math
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
@@ -211,8 +212,10 @@ def update_counting_counters(
         counters["last_correct"] += (last_pred == last_label).float().sum().item()
         counters["last_demo"] += 1
 
-        unseen_pred = active_pred[max_seen_len:]
-        unseen_label = active_label[max_seen_len:]
+        # max_seen_len includes the ignored starter label; active_* has that label removed.
+        unseen_start = max(max_seen_len - 1, 0)
+        unseen_pred = active_pred[unseen_start:]
+        unseen_label = active_label[unseen_start:]
         counters["unseen_len_correct"] += (unseen_pred == unseen_label).float().sum().item()
         counters["unseen_len_demo"] += unseen_label.numel()
 
@@ -230,9 +233,11 @@ def evaluate_counting_model(
     device,
     max_seen_len: int,
     max_batches: Optional[int] = None,
+    ctx=None,
 ) -> Dict[str, float]:
     was_training = model.training
     model.eval()
+    ctx = ctx or nullcontext()
 
     counters = {
         "correct": 0.0,
@@ -252,7 +257,8 @@ def evaluate_counting_model(
             break
         inputs = batch["input_id"].to(device)
         labels = batch["label"].to(device)
-        outputs = model(inputs, targets=labels, get_logits=True)
+        with ctx:
+            outputs = model(inputs, targets=labels, get_logits=True)
         loss, logits = unpack_model_outputs(outputs)
 
         losses.append(float(loss.detach().item()))
