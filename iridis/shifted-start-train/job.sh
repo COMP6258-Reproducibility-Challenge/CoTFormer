@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
-#SBATCH --mem=128G
+#SBATCH --mem=16G
 #SBATCH --time=24:00:00
 ################################################################################
 # CoTFormer shifted-start counting experiment.
@@ -22,8 +22,8 @@
 
 TASK="counting_samesymbol_shiftedstart3__tr25_te200__"
 N_GPUS=1
-N_LAYER=12
-N_REPEAT=3
+N_LAYER=1
+N_REPEAT=4
 ITERATIONS=100
 BATCH_SIZE=8
 ACC_STEPS=16
@@ -31,8 +31,8 @@ CKPT_FREQ=20
 EVAL_FREQ=10
 
 # Reserved layers:
-N_LAYER_BEGIN=2
-N_LAYER_END=1
+N_LAYER_BEGIN=0
+N_LAYER_END=0
 
 # ========================= END CONFIGURATION ================================
 
@@ -70,7 +70,6 @@ if [ -z "$REPO_DIR" ]; then
 fi
 
 source "$REPO_DIR/iridis/env.sh"
-
 if [ -z "$RUN_DIR" ]; then
     RUN_DIR=$(job_output_dir)
 fi
@@ -133,8 +132,8 @@ echo ""
 TRAIN_ARGS=(
     --config_format base
     --model fixed_cot_attn
-    --n_embd 768
-    --n_head 12
+    --n_embd 768   #not sure about these whatsoever
+    --n_head 12   #not sure about these whatsoever
     --n_layer "$N_LAYER"
     --n_repeat "$N_REPEAT"
     --batch_size "$BATCH_SIZE"

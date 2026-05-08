@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
-#SBATCH --mem=128G
+#SBATCH --mem=16G
 #SBATCH --time=24:00:00
 ################################################################################
 # Standard Transformer shifted-start counting baseline.
@@ -23,7 +23,7 @@
 TASK="counting_samesymbol_shiftedstart3__tr25_te200__"
 MODEL_NAME="base"
 N_GPUS=1
-N_LAYER=12
+N_LAYER=4
 ITERATIONS=100
 BATCH_SIZE=8
 ACC_STEPS=16
@@ -129,8 +129,8 @@ echo ""
 TRAIN_ARGS=(
     --config_format base
     --model "$MODEL_NAME"
-    --n_embd 768
-    --n_head 12
+    --n_embd 768   #not sure about these whatsoever
+    --n_head 12   #not sure about these whatsoever
     --n_layer "$N_LAYER"
     --batch_size "$BATCH_SIZE"
     --sequence_length 256

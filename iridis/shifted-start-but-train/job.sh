@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
-#SBATCH --mem=128G
+#SBATCH --mem=16G
 #SBATCH --time=24:00:00
 ################################################################################
 # BUT shifted-start counting baseline.
@@ -23,8 +23,8 @@
 TASK="counting_samesymbol_shiftedstart3__tr25_te200__"
 MODEL_NAME="but_full_depth"
 N_GPUS=1
-N_LAYER=12
-N_REPEAT=3
+N_LAYER=1
+N_REPEAT=4
 N_LAYER_BEGIN=0
 N_LAYER_END=0
 ITERATIONS=100
@@ -132,8 +132,8 @@ echo ""
 TRAIN_ARGS=(
     --config_format base
     --model "$MODEL_NAME"
-    --n_embd 768
-    --n_head 12
+    --n_embd 768   #not sure about these whatsoever
+    --n_head 12   #not sure about these whatsoever
     --n_layer "$N_LAYER"
     --n_repeat "$N_REPEAT"
     --batch_size "$BATCH_SIZE"
