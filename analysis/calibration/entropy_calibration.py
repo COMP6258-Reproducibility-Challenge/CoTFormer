@@ -89,25 +89,20 @@ EPS = 1e-12
 
 
 def _shannon_entropy_bits(p: np.ndarray) -> np.ndarray:
-    """Shannon entropy in bits, summed over the last axis.
+    """Shannon entropy in bits along the last axis (mirrors ``analysis.attention_taxonomy.shannon_entropy``).
 
-    Mirrors ``analysis.attention_taxonomy.shannon_entropy``: the EPS
-    floor handles the ``0 log 0 = 0`` limit. Input is NOT
-    renormalised; callers must pass a probability distribution that
-    already sums to one within floating-point tolerance.
+    Caller is responsible for normalisation; the EPS clip handles the
+    ``0 log 0 = 0`` limit.
     """
     q = np.clip(p, EPS, 1.0)
     return -np.sum(q * np.log2(q), axis=-1)
 
 
 def _apply_sink_correction(p: np.ndarray) -> np.ndarray:
-    """Zero out position-0 mass and renormalise the remainder per row.
+    """Zero position-0 mass, renormalise per row (pure-sink rows stay near-zero).
 
-    Mirrors ``analysis.attention_taxonomy.apply_sink_correction``.
-    Pure-sink rows (mass outside position 0 near zero) are kept
-    near-zero and contribute zero to entropy under the EPS-clipped
-    log; this is the documented behaviour per
-    ``docs/extend-notes.md`` §1.3 sink-correction note.
+    Mirrors ``analysis.attention_taxonomy.apply_sink_correction``;
+    see ``docs/extend-notes.md`` §1.3 sink-correction note.
     """
     corrected = p.copy()
     corrected[..., 0] = 0.0
@@ -125,51 +120,34 @@ def _reduce_attention_at_query(
     att: np.ndarray,
     target_positions: np.ndarray,
 ) -> dict[str, np.ndarray]:
-    """Compute per-sequence entropy / sink-mass / target-accuracy summaries.
+    """Per-sequence entropy / sink-mass / target-accuracy summaries.
 
-    Parameters
-    ----------
-    att : np.ndarray
-        Shape ``(n_seq, T_k)`` -- per-sequence attention distribution
-        at the query position, AVERAGED across (layer, head) of the
-        upper half of the substrate's block stack. The average across
-        layers/heads is the standard "model-wide attention" reduction
-        used by the calibration ladder; per-head dispersion is
-        captured by Protocol C, not here.
-    target_positions : np.ndarray
-        Integer ground-truth target positions, shape either
-        ``(n_seq,)`` (Condition A) or ``(n_seq, K)`` (Condition B).
-
-    Returns
-    -------
-    dict
-        Keys: ``entropy_full``, ``entropy_no_sink``, ``sink_mass``,
-        ``target_accuracy``. Each is shape ``(n_seq,)``.
+    ``att`` is ``(n_seq, T_k)``: the attention distribution at the
+    query position, averaged across (layer, head) of the upper half
+    of the substrate's block stack -- this layer/head average is the
+    standard "model-wide attention" reduction for the calibration
+    ladder (per-head dispersion is Protocol C's job).
+    ``target_positions`` is ``(n_seq,)`` (Condition A: 1 target) or
+    ``(n_seq, K)`` (Condition B: K targets, mass summed).
     """
     if att.ndim != 2:
         raise ValueError(
-            f"_reduce_attention_at_query: expected (n_seq, T_k); "
-            f"got shape {att.shape}"
+            f"_reduce_attention_at_query: expected (n_seq, T_k); got {att.shape}"
         )
 
     entropy_full = _shannon_entropy_bits(att)
     sink_mass = att[:, 0].astype(np.float64)
-    att_ns = _apply_sink_correction(att)
-    entropy_no_sink = _shannon_entropy_bits(att_ns)
+    entropy_no_sink = _shannon_entropy_bits(_apply_sink_correction(att))
 
     n_seq = att.shape[0]
+    idx = target_positions.astype(np.int64)
     if target_positions.ndim == 1:
-        # Condition A: single target per sequence.
-        idx = target_positions.astype(np.int64)
         target_accuracy = att[np.arange(n_seq), idx].astype(np.float64)
     elif target_positions.ndim == 2:
-        # Condition B: K targets per sequence; sum mass over them.
-        idx = target_positions.astype(np.int64)
         target_accuracy = np.take_along_axis(att, idx, axis=1).sum(axis=1).astype(np.float64)
     else:
         raise ValueError(
-            f"_reduce_attention_at_query: target_positions has "
-            f"unsupported ndim {target_positions.ndim}"
+            f"_reduce_attention_at_query: target_positions ndim {target_positions.ndim}"
         )
 
     return {
@@ -192,22 +170,16 @@ def _forward_attention_gpt2(
     device: str,
     batch_size: int,
 ) -> np.ndarray:
-    """Forward Tier-1 GPT-2-large on synthetic tokens; return query-row attention.
-
-    Returns a ``(n_seq, T_k)`` attention distribution at each query
-    position averaged across the upper half of the layer stack and
-    across all heads. The HuggingFace model is loaded with
-    ``cache_dir=$HF_HOME`` so the call is offline-safe on compute
-    nodes (the login-node helper ``cache_huggingface_model.py``
-    pre-populates the cache).
+    """Tier-1 forward pass; returns ``(n_seq, T_k)`` attention at the query
+    position, averaged across upper-half layers and heads. Uses
+    ``cache_dir=$HF_HOME`` for offline-safe execution on compute nodes.
     """
     import torch
     from transformers import AutoModelForCausalLM  # type: ignore
 
-    cache_dir = os.environ.get("HF_HOME")
     model = AutoModelForCausalLM.from_pretrained(
         hf_model_id,
-        cache_dir=cache_dir,
+        cache_dir=os.environ.get("HF_HOME"),
         attn_implementation="eager",  # eager backend exposes attention weights
     )
     model.eval()
@@ -218,10 +190,8 @@ def _forward_attention_gpt2(
     n_layer = int(model.config.n_layer)
     upper_layers = list(range(n_layer // 2, n_layer))
 
-    n_seq = tokens.shape[0]
-    T = tokens.shape[1]
+    n_seq, T = tokens.shape[0], tokens.shape[1]
     out = np.zeros((n_seq, T), dtype=np.float32)
-
     tokens_t = torch.as_tensor(tokens, dtype=torch.long)
     qpos_t = np.asarray(query_positions, dtype=np.int64)
 
@@ -229,25 +199,15 @@ def _forward_attention_gpt2(
         for start in range(0, n_seq, batch_size):
             stop = min(start + batch_size, n_seq)
             batch = tokens_t[start:stop].to(device)
-            outputs = model(
-                batch,
-                output_attentions=True,
-                use_cache=False,
-                return_dict=True,
-            )
-            # outputs.attentions: tuple of (B, n_head, T, T) per layer
+            outputs = model(batch, output_attentions=True, use_cache=False, return_dict=True)
+            # outputs.attentions: tuple of (B, n_head, T, T) per layer.
             stacked = torch.stack(
                 [outputs.attentions[layer] for layer in upper_layers], dim=0
             )
-            # Mean across (layer, head) for the AVERAGED attention
-            # distribution per (batch, query, key) cell.
-            mean_att = stacked.mean(dim=(0, 2))  # (B, T, T)
+            mean_att = stacked.mean(dim=(0, 2))  # (B, T, T) -- mean over (layer, head)
             for offset in range(stop - start):
                 qp = int(qpos_t[start + offset])
-                row = mean_att[offset, qp, :].detach().to("cpu").float().numpy()
-                # The post-softmax row sums to 1 per (layer, head); the
-                # average across layer/head is also a valid distribution.
-                out[start + offset] = row
+                out[start + offset] = mean_att[offset, qp, :].detach().to("cpu").float().numpy()
             del outputs, stacked, mean_att, batch
 
     del model
@@ -268,13 +228,10 @@ def _forward_attention_cotformer(
     batch_size: int,
     module_path: str,
 ) -> np.ndarray:
-    """Forward Tier-2 / Tier-3 CoTFormer-style ckpt; return query-row attention.
-
-    Uses the project's ``ActivationCollector`` with
-    ``ATTN_WEIGHTS`` + ``non_flash=True`` to recover per-(layer,
-    repeat, head) attention. Averages across (layer, repeat, head)
-    of the upper half of mid-block stack to yield a
-    ``(n_seq, T_k)`` row at the query position per sequence.
+    """Tier-2 / Tier-3 forward pass via ``ActivationCollector`` (ATTN_WEIGHTS
+    + ``non_flash=True``). Averages over upper-half (layer, repeat, head) and
+    returns ``(n_seq, T_k)`` rows at the query position. The collector is
+    re-entered per batch so buffers do not accumulate across n_seq (L4 RAM).
     """
     import torch
 
@@ -282,10 +239,7 @@ def _forward_attention_cotformer(
     from analysis.common.loader import load_model_from_checkpoint
     from analysis.common.sites import ActivationSite
 
-    # Convention: ckpt_dir is a directory; ckpt_file lives inside it.
-    # The protocol passes a single absolute path with the file name in
-    # job-gpu.sh; tolerate either input by splitting if the path points
-    # at an existing file.
+    # job-gpu.sh sometimes passes a full file path as ckpt_dir; tolerate it.
     if os.path.isfile(ckpt_dir):
         ckpt_dir, ckpt_file = os.path.split(ckpt_dir)
 
@@ -299,18 +253,11 @@ def _forward_attention_cotformer(
     model.eval()
 
     sites = [ActivationSite.ATTN_WEIGHTS]
-    n_seq = tokens.shape[0]
-    T = tokens.shape[1]
+    n_seq, T = tokens.shape[0], tokens.shape[1]
     out = np.zeros((n_seq, T), dtype=np.float32)
-
     tokens_t = torch.as_tensor(tokens, dtype=torch.long)
     qpos_t = np.asarray(query_positions, dtype=np.int64)
 
-    # The collector buffers attention per (layer, repeat). We forward
-    # batch-by-batch and aggregate the captured weights at the query
-    # position. The collector is re-entered per batch so its buffers
-    # do not accumulate across the full n_seq (RAM economy on L4).
-    seq_idx = 0
     with torch.no_grad():
         for start in range(0, n_seq, batch_size):
             stop = min(start + batch_size, n_seq)
@@ -320,52 +267,37 @@ def _forward_attention_cotformer(
             )
             with collector:
                 model(batch)
-            # Buffers: ``attn_weights_<group>_l<L>_r<R>`` keys.
-            # Each buffer is a list of (B*T_q, n_head, T_k) numpy arrays.
+            # Collector buffers: keys ``attn_weights_<group>_l<L>_r<R>`` with
+            # chunks of (B*T_q, n_head, T_k). Row i = query (i % T_q) of
+            # batch element (i // T_q); see ActivationCollector docstring.
             stacked_rows: list[np.ndarray] = []
-            n_layer_tot = 0
             for buf_key, chunks in collector._buffers.items():
-                if not buf_key.startswith("attn_weights_"):
+                if not buf_key.startswith("attn_weights_") or not chunks:
                     continue
-                if not chunks:
-                    continue
-                arr = np.concatenate(chunks, axis=0)  # (B*T_q, n_head, T_k)
-                stacked_rows.append(arr)
-                n_layer_tot += 1
+                stacked_rows.append(np.concatenate(chunks, axis=0))
             if not stacked_rows:
                 raise RuntimeError(
                     "_forward_attention_cotformer: collector produced no "
                     "attn_weights buffers; check module_path / non_flash"
                 )
             # Restrict to upper half of layers (analogous to GPT-2 path).
-            upper_start = n_layer_tot // 2
-            stacked_rows = stacked_rows[upper_start:]
+            stacked_rows = stacked_rows[len(stacked_rows) // 2:]
 
-            # Each chunk has shape (B*T_q, n_head, T_k); the convention
-            # is that row i corresponds to query position i % T_q within
-            # batch element i // T_q (see ActivationCollector docstring).
-            # Mean across heads first; then across (layer, repeat).
             B = stop - start
             T_local = batch.shape[1]
-            mean_per_layer = []
-            for arr in stacked_rows:
-                # (B*T_q, n_head, T_k) -> (B, T_q, n_head, T_k)
-                arr_re = arr.reshape(B, T_local, arr.shape[1], arr.shape[2])
-                head_mean = arr_re.mean(axis=2)  # (B, T_q, T_k)
-                mean_per_layer.append(head_mean)
+            mean_per_layer = [
+                arr.reshape(B, T_local, arr.shape[1], arr.shape[2]).mean(axis=2)
+                for arr in stacked_rows
+            ]
             mean_lr = np.stack(mean_per_layer, axis=0).mean(axis=0)  # (B, T_q, T_k)
             for offset in range(B):
                 qp = int(qpos_t[start + offset])
                 row = mean_lr[offset, qp, :]
-                # Tk may be < T (no padding mask present); pad with zero.
+                # T_k may be < T (no padding mask); right-pad with zeros.
                 if row.shape[0] < T:
-                    padded = np.zeros((T,), dtype=np.float32)
-                    padded[: row.shape[0]] = row
-                    out[start + offset] = padded
+                    out[start + offset, : row.shape[0]] = row
                 else:
                     out[start + offset] = row[:T]
-            seq_idx += B
-            # Free the collector's buffers immediately.
             del collector, stacked_rows, mean_per_layer
 
     del model
@@ -383,7 +315,7 @@ def _generate_substrate_tokens(
     vocab_size: int = DEFAULT_VOCAB,
     seq_length: int = SEQ_LENGTH,
 ) -> dict[str, Any]:
-    """Generate Condition A and Condition B token tensors and ground truth."""
+    """Generate Condition A and Condition B tokens with ground truth."""
     from analysis.calibration.synth_sequences import (
         generate_condition_A,
         generate_condition_B,
@@ -393,11 +325,8 @@ def _generate_substrate_tokens(
         n=n_per_condition, L=seq_length, vocab_size=vocab_size, seed=seed,
     )
     tok_b, qpos_b, tgt_b = generate_condition_B(
-        n=n_per_condition,
-        L=seq_length,
-        vocab_size=vocab_size,
-        inf_vocab=INF_VOCAB_SIZE,
-        seed=seed + 1,
+        n=n_per_condition, L=seq_length, vocab_size=vocab_size,
+        inf_vocab=INF_VOCAB_SIZE, seed=seed + 1,
     )
     return {
         "A": {
@@ -418,10 +347,8 @@ def _write_metrics_csv(
     per_seq_a: dict[str, np.ndarray],
     per_seq_b: dict[str, np.ndarray],
 ) -> str:
-    """Write the per-sequence metrics.csv.
-
-    Columns: ``seq_id, condition, entropy_full, entropy_no_sink,
-    sink_mass, target_accuracy`` per the directive's contract.
+    """Write per-sequence metrics.csv with columns:
+    ``seq_id, condition, entropy_full, entropy_no_sink, sink_mass, target_accuracy``.
     """
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "metrics.csv")
@@ -433,11 +360,9 @@ def _write_metrics_csv(
         ])
         seq_id = 0
         for cond_label, per_seq in (("A", per_seq_a), ("B", per_seq_b)):
-            n = per_seq["entropy_full"].shape[0]
-            for i in range(n):
+            for i in range(per_seq["entropy_full"].shape[0]):
                 writer.writerow([
-                    seq_id,
-                    cond_label,
+                    seq_id, cond_label,
                     float(per_seq["entropy_full"][i]),
                     float(per_seq["entropy_no_sink"][i]),
                     float(per_seq["sink_mass"][i]),
@@ -448,65 +373,48 @@ def _write_metrics_csv(
 
 
 def _run_forward_pass(args: argparse.Namespace) -> None:
-    """Forward-pass mode entry point. Dispatches by ``--tier``."""
+    """Forward-pass mode entry point; dispatches by ``--tier``."""
     os.makedirs(args.out, exist_ok=True)
-
     substrate = _generate_substrate_tokens(
-        n_per_condition=args.n_per_condition,
-        seed=args.seed,
+        n_per_condition=args.n_per_condition, seed=args.seed,
     )
 
     if args.tier == 1:
         ckpt_arg = args.ckpt or "gpt2-large"
-        att_a = _forward_attention_gpt2(
-            hf_model_id=ckpt_arg,
-            tokens=substrate["A"]["tokens"],
-            query_positions=substrate["A"]["query_positions"],
-            device=args.device,
-            batch_size=args.batch_size,
-        )
-        att_b = _forward_attention_gpt2(
-            hf_model_id=ckpt_arg,
-            tokens=substrate["B"]["tokens"],
-            query_positions=substrate["B"]["query_positions"],
-            device=args.device,
-            batch_size=args.batch_size,
-        )
+
+        def _fwd(cond: str) -> np.ndarray:
+            return _forward_attention_gpt2(
+                hf_model_id=ckpt_arg,
+                tokens=substrate[cond]["tokens"],
+                query_positions=substrate[cond]["query_positions"],
+                device=args.device,
+                batch_size=args.batch_size,
+            )
+
         substrate_name = ckpt_arg
     elif args.tier in (2, 3):
         if not args.ckpt:
-            raise ValueError(
-                f"_run_forward_pass: --ckpt is required for tier {args.tier}"
+            raise ValueError(f"_run_forward_pass: --ckpt is required for tier {args.tier}")
+
+        def _fwd(cond: str) -> np.ndarray:
+            return _forward_attention_cotformer(
+                ckpt_dir=args.ckpt,
+                ckpt_file="ckpt.pt",
+                tokens=substrate[cond]["tokens"],
+                query_positions=substrate[cond]["query_positions"],
+                device=args.device,
+                batch_size=args.batch_size,
+                module_path=args.module_path,
             )
-        att_a = _forward_attention_cotformer(
-            ckpt_dir=args.ckpt,
-            ckpt_file="ckpt.pt",
-            tokens=substrate["A"]["tokens"],
-            query_positions=substrate["A"]["query_positions"],
-            device=args.device,
-            batch_size=args.batch_size,
-            module_path=args.module_path,
-        )
-        att_b = _forward_attention_cotformer(
-            ckpt_dir=args.ckpt,
-            ckpt_file="ckpt.pt",
-            tokens=substrate["B"]["tokens"],
-            query_positions=substrate["B"]["query_positions"],
-            device=args.device,
-            batch_size=args.batch_size,
-            module_path=args.module_path,
-        )
+
         substrate_name = args.ckpt
     else:
         raise ValueError(f"_run_forward_pass: unknown tier {args.tier}")
 
-    per_seq_a = _reduce_attention_at_query(
-        att_a, substrate["A"]["target_positions"]
-    )
-    per_seq_b = _reduce_attention_at_query(
-        att_b, substrate["B"]["target_positions"]
-    )
+    att_a, att_b = _fwd("A"), _fwd("B")
 
+    per_seq_a = _reduce_attention_at_query(att_a, substrate["A"]["target_positions"])
+    per_seq_b = _reduce_attention_at_query(att_b, substrate["B"]["target_positions"])
     csv_path = _write_metrics_csv(args.out, per_seq_a, per_seq_b)
 
     meta = {
@@ -554,13 +462,11 @@ def _read_metrics_csv(path: str) -> dict[str, np.ndarray]:
 
 
 def _spearman_rho(a: np.ndarray, b: np.ndarray) -> float:
-    """Spearman rank correlation; pure-numpy fallback when scipy missing."""
+    """Spearman rho via scipy; pure-numpy fallback when scipy missing."""
     try:
         from scipy import stats as _scipy_stats
         rho = float(_scipy_stats.spearmanr(a, b).correlation)
-        if math.isnan(rho):
-            return 0.0
-        return rho
+        return 0.0 if math.isnan(rho) else rho
     except ImportError:
         ra = _rankdata(a)
         rb = _rankdata(b)
@@ -568,9 +474,7 @@ def _spearman_rho(a: np.ndarray, b: np.ndarray) -> float:
         rb_c = rb - np.mean(rb)
         num = float(np.sum(ra_c * rb_c))
         den = float(math.sqrt(float(np.sum(ra_c ** 2) * np.sum(rb_c ** 2))))
-        if den == 0.0:
-            return 0.0
-        return num / den
+        return num / den if den > 0.0 else 0.0
 
 
 def _rankdata(x: np.ndarray) -> np.ndarray:
@@ -579,8 +483,7 @@ def _rankdata(x: np.ndarray) -> np.ndarray:
     ranks = np.empty_like(order, dtype=np.float64)
     ranks[order] = np.arange(1, x.shape[0] + 1, dtype=np.float64)
     sorted_x = x[order]
-    i = 0
-    n = x.shape[0]
+    i, n = 0, x.shape[0]
     while i < n:
         j = i + 1
         while j < n and sorted_x[j] == sorted_x[i]:
@@ -596,17 +499,14 @@ def _rankdata(x: np.ndarray) -> np.ndarray:
 def _fit_logistic_classifier(
     X: np.ndarray, y: np.ndarray
 ) -> tuple[float, dict[str, Any]]:
-    """Fit logistic regression and return (accuracy, model-info dict).
-
-    Falls back to a numpy gradient-descent logistic if sklearn is
-    unavailable; both produce the same accuracy on this 2D problem.
+    """Logistic regression accuracy + model info; sklearn with numpy GD fallback
+    (analysis-only stage may run without sklearn -- portability requirement).
     """
     try:
         from sklearn.linear_model import LogisticRegression  # type: ignore
         clf = LogisticRegression(solver="lbfgs", max_iter=1000)
         clf.fit(X, y)
-        pred = clf.predict(X)
-        acc = float(np.mean(pred == y))
+        acc = float(np.mean(clf.predict(X) == y))
         return acc, {
             "backend": "sklearn",
             "coef": [float(c) for c in clf.coef_.ravel()],
@@ -615,7 +515,7 @@ def _fit_logistic_classifier(
     except ImportError:
         pass
 
-    # Numpy fallback: standardised features + closed-form-ish IRLS.
+    # Numpy fallback: standardised features + gradient descent.
     X_mean = X.mean(axis=0)
     X_std = X.std(axis=0) + EPS
     Xn = (X - X_mean) / X_std
@@ -623,13 +523,9 @@ def _fit_logistic_classifier(
     Xb = np.concatenate([Xn, np.ones((n, 1))], axis=1)
     w = np.zeros(d + 1)
     for _ in range(200):
-        z = Xb @ w
-        # numerically stable sigmoid
-        p = 1.0 / (1.0 + np.exp(-np.clip(z, -30.0, 30.0)))
-        grad = Xb.T @ (p - y) / n
-        w -= 0.5 * grad
-    pred = (Xb @ w >= 0.0).astype(np.int64)
-    acc = float(np.mean(pred == y))
+        p = 1.0 / (1.0 + np.exp(-np.clip(Xb @ w, -30.0, 30.0)))
+        w -= 0.5 * (Xb.T @ (p - y) / n)
+    acc = float(np.mean((Xb @ w >= 0.0).astype(np.int64) == y))
     return acc, {
         "backend": "numpy-fallback",
         "coef_standardised": [float(c) for c in w[:-1]],
@@ -643,27 +539,20 @@ def _per_tier_verdict(
     metrics: dict[str, np.ndarray],
     operative_metric: str,
 ) -> dict[str, Any]:
-    """Compute a per-tier PASS / AMBIGUOUS / FAIL verdict from Gate 4.
-
-    Spearman + classifier evaluated on the pooled (Condition A union
-    Condition B) population; the operative entropy column is selected
-    by ``operative_metric`` ("entropy_full" or "entropy_no_sink").
+    """Per-tier PASS / AMBIGUOUS / FAIL from Gate 4 (Spearman + 2-D classifier
+    on pooled A union B). ``operative_metric`` selects ``entropy_full`` or
+    ``entropy_no_sink`` depending on Gate-2 sink-shift violation.
     """
     e = metrics[operative_metric]
     a = metrics["target_accuracy"]
-    cond = metrics["condition"]
-    y = (cond == "B").astype(np.int64)  # binary classifier label
+    y = (metrics["condition"] == "B").astype(np.int64)
 
     rho = _spearman_rho(e, a)
-    X = np.stack([e, a], axis=1)
-    classifier_acc, classifier_info = _fit_logistic_classifier(X, y)
-    # Entropy-alone failure check (Gate-4 FAIL clause): >= 0.85 means
-    # classifier-on-entropy alone separates the conditions strongly,
-    # which is itself a refutation of the monotone interpretation
-    # (the metric becomes a condition-detector instead of a quality
-    # measure).
-    Xe = e.reshape(-1, 1)
-    entropy_alone_acc, _ = _fit_logistic_classifier(Xe, y)
+    classifier_acc, classifier_info = _fit_logistic_classifier(np.stack([e, a], axis=1), y)
+    # Entropy-alone Gate-4 FAIL clause: a strong 1-D classifier (>= 0.85)
+    # means entropy is acting as a condition-detector, not a quality measure
+    # -- itself a refutation of the monotone interpretation.
+    entropy_alone_acc, _ = _fit_logistic_classifier(e.reshape(-1, 1), y)
 
     if rho <= GATE4_SPEARMAN_PASS and classifier_acc >= GATE4_CLASSIFIER_PASS:
         verdict = "PASS"
@@ -686,15 +575,21 @@ def _gate_ladder(
     tier1: dict[str, np.ndarray],
     tier2: dict[str, np.ndarray],
 ) -> dict[str, Any]:
-    """Apply the four-gate ladder and return the aggregate verdict dict."""
+    """Apply the four-gate ladder; return the aggregate verdict dict.
+
+    Gates: (1) Tier-1 Condition-A baseline >= 0.5; (2) max sink-correction
+    shift < 1 bit, else swap operative metric to entropy_no_sink (never
+    aborts); (3) Tier-1 / Tier-2 triangulation -- Tier 2 governs on
+    disagreement per DEC-029; (4) per-tier Spearman + classifier on the
+    governing tier (PASS iff rho <= -0.5 AND clf >= 0.8).
+    """
     flags: dict[str, Any] = {}
 
-    # ---------------- Gate 1: baseline ----------------
+    # Gate 1 -- baseline
     tier1_a = tier1["target_accuracy"][tier1["condition"] == "A"]
     baseline_acc = float(np.mean(tier1_a)) if tier1_a.size > 0 else 0.0
     gate1 = bool(baseline_acc >= GATE1_BASELINE_ACC)
     flags["gate1_baseline_accuracy"] = baseline_acc
-
     if not gate1:
         return {
             "verdict": "FAIL_baseline",
@@ -712,43 +607,26 @@ def _gate_ladder(
             "flags": flags,
         }
 
-    # ---------------- Gate 2: sink correction ----------------
+    # Gate 2 -- sink correction (swaps metric, never aborts)
     def _max_sink_shift(m: dict[str, np.ndarray]) -> float:
         return float(np.max(np.abs(m["entropy_full"] - m["entropy_no_sink"])))
 
-    sink_shift_t1 = _max_sink_shift(tier1)
-    sink_shift_t2 = _max_sink_shift(tier2)
-    flags["sink_shift_tier1_max_bits"] = sink_shift_t1
-    flags["sink_shift_tier2_max_bits"] = sink_shift_t2
-
+    flags["sink_shift_tier1_max_bits"] = _max_sink_shift(tier1)
+    flags["sink_shift_tier2_max_bits"] = _max_sink_shift(tier2)
     sink_violation = bool(
-        sink_shift_t1 >= GATE2_SINK_BITS or sink_shift_t2 >= GATE2_SINK_BITS
+        flags["sink_shift_tier1_max_bits"] >= GATE2_SINK_BITS
+        or flags["sink_shift_tier2_max_bits"] >= GATE2_SINK_BITS
     )
     operative_metric = "entropy_no_sink" if sink_violation else "entropy_full"
     flags["sink_shift_violation"] = sink_violation
-    gate2 = True  # gate 2 never aborts; a violation only swaps the metric
 
-    # ---------------- Gate 4 first (per-tier) ----------------
+    # Gate 4 per-tier -> Gate 3 triangulation -> aggregate
     tier1_v = _per_tier_verdict(tier1, operative_metric)
     tier2_v = _per_tier_verdict(tier2, operative_metric)
-
-    # ---------------- Gate 3: triangulation ----------------
-    # PASS if both PASS, FAIL if both FAIL; otherwise disagreement.
-    if tier1_v["verdict"] == tier2_v["verdict"]:
-        gate3 = True
-        flags["triangulation_disagreement"] = False
-    else:
-        gate3 = False
-        flags["triangulation_disagreement"] = True
-        # Tier 2 governs per DEC-029.
-
-    # The aggregate verdict is governed by Tier 2 (per DEC-029) when
-    # disagreement is reported; when both tiers agree, either tier's
-    # verdict is the aggregate.
-    governing = tier2_v if not gate3 else tier1_v
+    gate3 = tier1_v["verdict"] == tier2_v["verdict"]
+    flags["triangulation_disagreement"] = not gate3
+    governing = tier1_v if gate3 else tier2_v  # DEC-029: Tier 2 governs disagreement
     aggregate_verdict = governing["verdict"]
-
-    gate4 = bool(aggregate_verdict == "PASS")
 
     return {
         "verdict": aggregate_verdict,
@@ -762,9 +640,9 @@ def _gate_ladder(
         "tier2": tier2_v,
         "gates": {
             "gate1_baseline": gate1,
-            "gate2_sink": gate2,
+            "gate2_sink": True,  # gate 2 never aborts -- only swaps metric
             "gate3_triangulation": gate3,
-            "gate4_spearman_classifier": gate4,
+            "gate4_spearman_classifier": aggregate_verdict == "PASS",
         },
         "flags": flags,
     }
@@ -776,7 +654,7 @@ def _render_calibration_figure(
     tier2: dict[str, np.ndarray],
     verdict: dict[str, Any],
 ) -> str | None:
-    """Write a 2-panel calibration figure: scatter + per-condition histogram."""
+    """2-panel calibration figure: scatter + per-condition histogram."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -785,22 +663,16 @@ def _render_calibration_figure(
         return None
 
     op_metric = verdict["operative_metric"]
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
-
-    # Left panel: scatter + regression line, colour by condition.
     e_all = np.concatenate([tier1[op_metric], tier2[op_metric]])
     a_all = np.concatenate([tier1["target_accuracy"], tier2["target_accuracy"]])
     cond_all = np.concatenate([tier1["condition"], tier2["condition"]])
     mask_a = cond_all == "A"
     mask_b = cond_all == "B"
-    axes[0].scatter(
-        e_all[mask_a], a_all[mask_a],
-        s=4, alpha=0.4, c="#1f77b4", label="Condition A",
-    )
-    axes[0].scatter(
-        e_all[mask_b], a_all[mask_b],
-        s=4, alpha=0.4, c="#d62728", label="Condition B",
-    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    # Left: scatter + regression line.
+    axes[0].scatter(e_all[mask_a], a_all[mask_a], s=4, alpha=0.4, c="#1f77b4", label="Condition A")
+    axes[0].scatter(e_all[mask_b], a_all[mask_b], s=4, alpha=0.4, c="#d62728", label="Condition B")
     if e_all.size > 1:
         slope, intercept = np.polyfit(e_all, a_all, 1)
         x_line = np.linspace(float(np.min(e_all)), float(np.max(e_all)), 100)
@@ -813,13 +685,9 @@ def _render_calibration_figure(
     )
     axes[0].legend(loc="best", fontsize=8)
 
-    # Right panel: per-condition entropy histogram.
-    axes[1].hist(
-        e_all[mask_a], bins=40, alpha=0.55, color="#1f77b4", label="Condition A",
-    )
-    axes[1].hist(
-        e_all[mask_b], bins=40, alpha=0.55, color="#d62728", label="Condition B",
-    )
+    # Right: per-condition entropy histogram.
+    axes[1].hist(e_all[mask_a], bins=40, alpha=0.55, color="#1f77b4", label="Condition A")
+    axes[1].hist(e_all[mask_b], bins=40, alpha=0.55, color="#d62728", label="Condition B")
     axes[1].set_xlabel(f"Attention entropy ({op_metric}, bits)")
     axes[1].set_ylabel("Count")
     axes[1].set_title("Entropy distribution by condition")
@@ -836,20 +704,14 @@ def _run_analysis_only(args: argparse.Namespace) -> None:
     """Analysis-only mode entry point: 4-gate verdict and aggregate outputs."""
     tier1_csv = os.path.join(args.out, "tier1", "metrics.csv")
     tier2_csv = os.path.join(args.out, "tier2", "metrics.csv")
-    if not os.path.isfile(tier1_csv):
-        raise FileNotFoundError(
-            f"_run_analysis_only: missing {tier1_csv}; run forward-pass mode "
-            f"with --tier 1 first"
-        )
-    if not os.path.isfile(tier2_csv):
-        raise FileNotFoundError(
-            f"_run_analysis_only: missing {tier2_csv}; run forward-pass mode "
-            f"with --tier 2 first"
-        )
+    for tier, path in ((1, tier1_csv), (2, tier2_csv)):
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"_run_analysis_only: missing {path}; run forward-pass mode with --tier {tier} first"
+            )
 
     tier1 = _read_metrics_csv(tier1_csv)
     tier2 = _read_metrics_csv(tier2_csv)
-
     verdict = _gate_ladder(tier1, tier2)
 
     aggregate_dir = os.path.join(args.out, "aggregate")
@@ -925,16 +787,8 @@ def _run_analysis_only(args: argparse.Namespace) -> None:
 
 
 def build_argparser() -> argparse.ArgumentParser:
-    """Return the CLI parser for the calibration entry point.
-
-    Expected inputs: ``--ckpt`` (Tier 1 path to GPT-2-large snapshot;
-    Tier 2 path to ADM C5; Tier 3 contingency), ``--tier`` (1 / 2 / 3),
-    ``--n-per-condition`` (default 1000 per condition for the primary
-    ladder; 4000 per condition for the AMBIGUOUS-verdict retry),
-    ``--seed``, ``--out`` (output directory), ``--module-path``
-    (forwarded to the common loader; Tier 1 uses
-    ``model.transformer.h``, Tiers 2 and 3 use
-    ``model.transformer.h_mid``).
+    """CLI parser for Protocol D-calibration; per-flag docs live on each
+    ``add_argument`` ``help=`` below.
     """
     parser = argparse.ArgumentParser(
         description="Protocol D-calibration -- 4-gate attention-entropy validator"

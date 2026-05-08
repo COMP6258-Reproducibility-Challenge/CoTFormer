@@ -1558,12 +1558,12 @@ across 2000 sequences x 256 attention distributions).
 
 | Claim | Primary | Secondary | Tertiary |
 |-------|---------|-----------|----------|
-| Representations refine across repeats | RQ1 Tuned Lens (per-site identity-diagnostic-filtered) | RQ1 unweighted Logit Lens | RQ2 debiased-CKA monotonic decrease |
+| Representations refine across repeats | RQ1 Tuned Lens vs Logit Lens cross-lens agreement (`agreement_band` from `tuned_lens_triangulation.json`) | RQ1 unweighted Logit Lens | RQ2 debiased-CKA monotonic decrease |
 | KV cache is compressible | Protocol G activation rank | KV-CoRE NER per repeat | Chun PR ([RQ6](#rq6-effective-dimensionality-sq1)) |
 | Weight tying correlates with low rank | Kobayashi weight-matrix rank [11] | Protocol G activation rank | Tuned Lens translator SV spectrum |
-| Attention specialises by repeat | RQ3 k-means clustering (permutation-null gated) | Zheng taxonomy mapping [7] | per-head attention-distribution diversity (pairwise JS divergence across heads within a layer) |
-| Contextual isolation | RQ5 DV-1 per-token CE loss vs context survival (logit-derived) | RQ5 DV-2 calibrated isolation score vs context survival (attention-derived; per [Protocol D-calibration](#protocol-d-calibration-rq5-dv-2-attention-entropy-validation)) | RQ5 DV-3 representation cosine similarity (hidden-state-derived) |
-| Router learns difficulty proxy | RQ4 halting-vs-loss bootstrap CI | RQ7 update magnitude | Router-score vs state-delta correlation |
+| Attention specialises by repeat | Zucchet et al. 2025 [12] paired-t-test on per-head Gini at repeat 1 vs repeat 5 (primary, per `analysis/attention_taxonomy.py`) | per-layer Spearman rho on (repeat, Gini) with Holm-Bonferroni across the 21 mid-layers (secondary, per `analysis/attention_taxonomy.py`) | mixed-effects fixed-effect slope on `repeat` (`statsmodels.regression.mixed_linear_model.MixedLM` in `analysis/attention_taxonomy.py`) |
+| Contextual isolation | RQ5 DV-2 calibrated isolation score (attention-derived; D-cal-gated per [Protocol D-calibration](#protocol-d-calibration-rq5-dv-2-attention-entropy-validation); implemented in `analysis/router_analysis.py`) | *(RQ5 DV-1 logit-derived per-token CE loss vs context survival deferred to DIR-002 Protocol D extension; row flagged single-measurement-preliminary per the §1.6 audit)* | *(RQ5 DV-3 hidden-state cosine similarity deferred to DIR-002 Protocol D extension)* |
+| Router learns difficulty proxy | RQ7 update magnitude vs router-score bin (`interpolation_validity` DV-1, the only currently-implemented measurement; `analysis/interpolation_validity.py`) | *(RQ4 halting-vs-loss bootstrap CI deferred to DIR-002 Protocol D extension)* | *(router-score-vs-state-delta correlation = `interpolation_validity` DV-2 — same script as the primary, NOT operationally independent; demoted to supplementary diagnostic)* |
 | Recurrence helps counting | RQ9 DV-1 OOD accuracy sweep | RQ9 DV-2 paired linear-and-non-linear probe R^2 per repeat | RQ9 DV-3 attention-pattern analysis at penultimate repeat AND DV-4 causal intervention via zero-ablation |
 
 Convergence rule: "supported" if primary plus at least one
@@ -1572,6 +1572,28 @@ secondary agree under the operational-independence audit;
 the operational-independence audit; "contradicted" if primary
 and secondary disagree (the disagreement itself is the finding,
 not a measurement failure).
+
+Row 4 audit note: the three Row 4 cells consume the same
+forward-pass attention cache but apply three different statistics
+(paired t-test on per-head Gini, rank-based Spearman rho with
+per-layer Holm-Bonferroni, parametric mixed-effects slope) —
+different statistic, same activations — operationally-independent
+at the statistic level per the §1.6 audit discipline.
+
+Row 5 is single-measurement-preliminary until the DIR-002
+Protocol D extension lands; DV-1 (logit-derived) and DV-3
+(hidden-state cosine similarity) are deferred. Cross-reference:
+[DEC-030](#19-decision-log) day-10 trigger places RQ5 first in
+the scope-shed order.
+
+Row 6 is single-protocol-preliminary on `interpolation_validity`
+until the RQ4 partial-correlation Protocol D extension lands.
+
+Row 7 is computed by a SEPARATE counting synthesis pass:
+`python -m analysis.synthesis --run-dir iridis/counting-sweep/run_N`.
+The analytic synthesis on `iridis/analyze-lncot+adm/run_N` does
+not load the counting artefacts; the counting DVs live in the
+counting-sweep `RUN_DIR` and are merged at writeup time only.
 
 **Concern 2 — scope creep**: addressed by the 2-week elapsed ceiling (see [Scope Discipline](#scope-discipline)) and the [Scope-shedding pre-registered order](#scope-shedding-pre-registered-order). Protocols that do not produce triangulated results by the ceiling are moved to "future work" regardless of completion status.
 
@@ -1617,8 +1639,26 @@ sign across all three) is also exempt because the claim is the
 agreement across checkpoints rather than the per-checkpoint
 significance.
 
-The correction is applied **once per protocol output**, not
-re-applied at synthesis time; the synthesis output records both
+The hybrid correction is applied at two scopes per
+[DEC-025](#19-decision-log):
+
+1. **Family-wise Holm-Bonferroni at α = 0.01 across the 9
+   RQ-primary tests**, applied at synthesis time on the raw
+   `p_value` keys read from each protocol's canonical artefact
+   (synthesis is the only site that sees all 9 RQ-primary
+   p-values).
+2. **Benjamini-Hochberg FDR at q = 0.05 within each RQ's
+   secondary tests**, applied per-protocol where the script
+   already implements it (e.g., `interpolation_validity.py`'s
+   per-cell `p_holm`, `effective_dim.py`'s per-layer Holm,
+   `attention_taxonomy.py`'s per-layer Holm — these stay as
+   currently emitted).
+
+Per-protocol secondary corrections do NOT re-apply at synthesis
+time. The family-wise correction is exclusive to synthesis.
+Cross-link: see [DEC-025](#19-decision-log) for the canonical
+pre-registration; see `analysis/synthesis.py::family_wise_holm`
+for the implementation site. The synthesis output records both
 the raw p-value and the corrected p-value for transparency, and
 the convergence rule above applies to the corrected p-value
 column.

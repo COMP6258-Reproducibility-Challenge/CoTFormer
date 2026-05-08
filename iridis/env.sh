@@ -12,7 +12,7 @@
 SHARED_SCRATCH="/scratch/ab3u21"
 
 # --- Conda environment (shared, single install) ---
-CONDA_ENV_PREFIX="$SHARED_SCRATCH/cotformer-env"
+export CONDA_ENV_PREFIX="$SHARED_SCRATCH/cotformer-env"
 
 # --- Shared data and output paths ---
 export DATA_DIR="$SHARED_SCRATCH/datasets"

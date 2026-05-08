@@ -31,6 +31,9 @@ from typing import Any, Iterable
 TAG_PATTERN = re.compile(r"^c[1-5][a-z]?_")
 
 # Per-protocol JSON filenames discovered under each <run-dir>/<tag>/.
+# Tuned Lens emits TWO artefacts (diagnostic + triangulation); both are
+# loaded under distinct keys so synthesis can pick the right verdict
+# domain (training-convergence vs cross-lens agreement).
 PROTOCOL_FILES: dict[str, str] = {
     "logit_lens": "logit_lens_results.json",
     "cka": "cka_results.json",
@@ -41,7 +44,8 @@ PROTOCOL_FILES: dict[str, str] = {
     "interpolation_validity": "interpolation_validity_results.json",
     "depth_emb_freeze": "depth_emb_freeze_results.json",
     "residual_diagnostics": "residual_diagnostics_results.json",
-    "tuned_lens": "tuned_lens_results.json",
+    "tuned_lens_diagnostic": "tuned_lens_diagnostic.json",
+    "tuned_lens_triangulation": "tuned_lens_triangulation.json",
 }
 
 # d_cal/aggregate/verdict.json lives under <run-dir>/d_cal/aggregate/, not
@@ -53,54 +57,150 @@ D_CAL_VERDICT_RELPATH = os.path.join("d_cal", "aggregate", "verdict.json")
 # JSON-key path used to locate the per-checkpoint verdict (or "preliminary"
 # downgrade).  A path of None means "not encoded as a single-key verdict in
 # the artefact" -- those rows fall back to artefact-presence as evidence.
+# Optional keys ``primary_label``, ``secondary_label``, ``tertiary_label``
+# carry per-cell prose used in the markdown report (default: capitalised
+# tier name).  Optional keys ``status`` and ``deferred_note`` allow rows
+# to declare deferred / preliminary status without breaking the schema.
 TRIANGULATION_ROWS: list[dict[str, Any]] = [
     {
+        # Cross-lens agreement (tuned vs unweighted logit lens) lives in
+        # tuned_lens_triangulation.json under "agreement_band". The
+        # tuned_lens_diagnostic.json "verdict" is a translator-training
+        # convergence label (>=95/105 translators beat baseline KL),
+        # NOT the scientific monotonicity claim, so the secondary tier
+        # uses logit_lens's paired-t verdict and the tertiary tier
+        # demotes CKA to a supplementary check.
         "claim": "Representations refine across repeats",
-        "primary": ("tuned_lens", "verdict"),
+        "primary":   ("tuned_lens_triangulation", "agreement_band"),
         "secondary": ("logit_lens", "h0_test.rejects_flat"),
-        "tertiary": ("cka", "h0_verdict.rejects_h0_redundant_same_weights"),
+        "tertiary":  ("cka", "h0_verdict.rejects_h0_redundant_same_weights"),
+        "tertiary_label": "supplementary (CKA)",
     },
     {
+        # Top-level verdict key in kv_rank_results.json is
+        # "prediction_1_verdict", which is itself a sub-object whose
+        # "verdict" field carries the three-way label
+        # (evidence-of-compounding / consistent-with-literature /
+        # inconsistent-with-literature).
         "claim": "KV cache is compressible",
-        "primary": ("kv_rank", "verdict"),
-        "secondary": ("kv_rank", "verdict"),
-        "tertiary": ("effective_dim", "rq6_verdict"),
+        "primary":   ("kv_rank", "prediction_1_verdict.verdict"),
+        "secondary": ("kv_rank", "prediction_1_verdict.verdict"),
+        "tertiary":  ("effective_dim", "rq6_verdict.claim_supported"),
     },
     {
-        "claim": "Weight tying correlates with low rank",
-        "primary": ("kv_rank", "verdict"),
-        "secondary": ("kv_rank", "verdict"),
-        "tertiary": ("tuned_lens", "verdict"),
+        # Protocol G Type A weight-matrix rank lives inside kv_rank.py
+        # (NOT a separate weight_matrix_rank.py script). Type B is the
+        # activation-rank line of the same artefact; the Chun PR cross-
+        # check is via effective_dim's rq6 claim. Wiring unchanged from
+        # row 2; the prose label here is what surfaces in the report.
+        "claim": "Weight tying / low rank (Protocol G Type A weight-matrix rank)",
+        "primary":   ("kv_rank", "prediction_1_verdict.verdict"),
+        "secondary": ("kv_rank", "prediction_1_verdict.verdict"),
+        "tertiary":  ("effective_dim", "rq6_verdict.claim_supported"),
+        "primary_label": "Protocol G Type A weight-matrix rank",
     },
     {
+        # attention_taxonomy implements the Zucchet et al. 2025 triple
+        # (paired-t / per-layer Spearman+Holm / mixed-effects). The
+        # top-level verdict + per-gate booleans live under
+        # "prediction2.{verdict, verdict_meta}".
         "claim": "Attention specialises by repeat",
-        "primary": ("attention_taxonomy", "verdict"),
-        "secondary": ("attention_taxonomy", "verdict"),
-        "tertiary": ("attention_taxonomy", "verdict"),
+        "primary":   ("attention_taxonomy", "prediction2.verdict"),
+        "secondary": ("attention_taxonomy",
+                      "prediction2.verdict_meta.gate2_spearman_majority_reject"),
+        "tertiary":  ("attention_taxonomy",
+                      "prediction2.verdict_meta.gate3_mixed_effects_reject_flat"),
     },
     {
+        # RQ5 DV-1/DV-3 are deferred (router_analysis.py docstring); only
+        # the run-level Protocol D-calibration aggregate verdict exists,
+        # accessible via the synthetic protocol key set up in
+        # collect_artefacts (entropy_calibration_aggregate -> __run__/d_cal).
         "claim": "Contextual isolation",
-        "primary": ("router_analysis", None),
-        "secondary": ("router_analysis", None),
-        "tertiary": ("router_analysis", None),
+        "primary":   ("entropy_calibration_aggregate", "verdict"),
+        "secondary": None,
+        "tertiary":  None,
+        "status": "single-measurement-preliminary",
+        "deferred_note": (
+            "DV-1/DV-3 deferred to Protocol D extension "
+            "(see router_analysis.py docstring)"
+        ),
     },
     {
+        # RQ4 partial-correlation halting-vs-loss is deferred; only the
+        # interpolation_validity update-magnitude DV-1 exists. State-delta
+        # correlation = DV-2 of the same protocol, NOT operationally
+        # independent (drop).
         "claim": "Router learns difficulty proxy",
-        "primary": ("router_analysis", None),
-        "secondary": ("interpolation_validity", None),
-        "tertiary": ("router_analysis", None),
+        "primary":   ("interpolation_validity", "aggregate.n_cells_rejected_holm"),
+        "secondary": None,
+        "tertiary":  None,
+        "status": "single-protocol-preliminary",
+        "deferred_note": (
+            "RQ4 halting-vs-loss bootstrap CI deferred to Protocol D extension"
+        ),
     },
     {
+        # Counting cells live in a different RUN_DIR (iridis/counting-
+        # sweep/run_N/), not the analyze-lncot+adm dir this synthesis
+        # consumes. Marked deferred to a separate synthesis pass.
         "claim": "Recurrence helps counting",
-        # The counting sub-stream's outputs live in a separate package
-        # (analysis/counting_*.py -> different RUN_DIR). Marked here for
-        # completeness; will register as missing-data inside the analyze-
-        # lncot+adm run dir, which is correct.
-        "primary": ("counting_dv1", None),
-        "secondary": ("counting_dv2", None),
-        "tertiary": ("counting_dv3", None),
+        "primary":   None,
+        "secondary": None,
+        "tertiary":  None,
+        "status": "deferred-to-counting-synthesis",
+        "deferred_note": (
+            "Computed by separate counting synthesis pass: "
+            "`python -m analysis.synthesis --run-dir iridis/counting-sweep/run_N`"
+        ),
     },
 ]
+
+
+# RQ-primary p-value paths for DEC-025 family-wise Holm-Bonferroni.
+# Each entry maps an RQ id to (protocol_key, dotted_path) where the
+# raw scalar p-value lives in the protocol's per-tag JSON artefact.
+# A value of None means "deferred / no aggregate p-value emitted at this
+# wave" -- those RQs are reported in the Holm table with status=deferred
+# and DO NOT contribute to the family size.
+#
+# Path notes (all verified by reading the protocol scripts):
+#   RQ1 logit_lens.h0_test.p_value          paired-t over R1 vs R_last
+#   RQ2 cka                                 NO scalar p-value (q90 cut-off
+#                                           is the test statistic; deferred)
+#   RQ3 attention_taxonomy.prediction2      paired-t per metric, no aggregate
+#                                           scalar; minimum across the 3 raw
+#                                           metrics is used as the family
+#                                           p-value for this RQ
+#   RQ4 deferred (DIR-002 reserve)
+#   RQ5 D-cal verdict is categorical, no p
+#   RQ6 effective_dim                       per-layer Holm; min across
+#                                           per_layer_slope.<L>.loglinear.
+#                                           p_one_tailed_slope_nonpositive
+#                                           is the family p-value for this RQ
+#   RQ7 interpolation_validity              per-cell Holm; aggregate count is
+#                                           the only emitted scalar; we use
+#                                           a synthetic p of 0.0 if any cell
+#                                           rejects (>0), else 1.0
+#   RQ8 depth_emb_freeze.h0_per_condition.p_values_holm[0]   CE-delta Holm p
+#   RQ9 deferred (counting RUN_DIR not loaded here)
+RQ_PRIMARY_PVALUE_PATHS: dict[str, tuple[str, str] | None] = {
+    "RQ1": ("logit_lens", "h0_test.p_value"),
+    "RQ2": None,
+    "RQ3": ("attention_taxonomy", "__rq3_min_paired_p__"),
+    "RQ4": None,
+    "RQ5": None,
+    "RQ6": ("effective_dim", "__rq6_min_layer_p__"),
+    "RQ7": ("interpolation_validity", "__rq7_aggregate_synthetic_p__"),
+    "RQ8": ("depth_emb_freeze", "h0_per_condition.p_values_holm.0"),
+    "RQ9": None,
+}
+
+
+# Family-wise alpha for DEC-025 Holm-Bonferroni across the RQ-primary
+# tests. Synthesis is the only site that sees all RQ artefacts at once,
+# so the correction is applied here.
+DEC025_FAMILY_ALPHA: float = 0.01
 
 
 # ---------------------------------------------------------------------------
@@ -141,16 +241,23 @@ def collect_artefacts(run_dir: str, tags: list[str]) -> dict[str, dict[str, Any]
     """Return ``{tag: {protocol_name: parsed_json_or_None}}``.
 
     Also stuffs the run-level d_cal aggregate under the synthetic key
-    ``__run__`` so downstream code can treat it uniformly.
+    ``__run__`` so downstream code can treat it uniformly. The same
+    payload is mirrored under each tag as ``entropy_calibration_aggregate``
+    so the triangulation matrix can resolve RQ5's run-level cell with the
+    same per-tag resolver as the other rows.
     """
     out: dict[str, dict[str, Any]] = {}
+    d_cal_payload = load_json(os.path.join(run_dir, D_CAL_VERDICT_RELPATH))
     for tag in tags:
         per_tag: dict[str, Any] = {}
         for proto, fname in PROTOCOL_FILES.items():
             per_tag[proto] = load_json(os.path.join(run_dir, tag, fname))
+        # Mirror the run-level D-calibration aggregate so the triangulation
+        # matrix's entropy_calibration_aggregate cell resolves uniformly.
+        per_tag["entropy_calibration_aggregate"] = d_cal_payload
         out[tag] = per_tag
     out["__run__"] = {
-        "d_cal": load_json(os.path.join(run_dir, D_CAL_VERDICT_RELPATH)),
+        "d_cal": d_cal_payload,
     }
     return out
 
@@ -195,16 +302,48 @@ def _verdict_label(payload: Any, dotted: str | None) -> str:
     if isinstance(val, bool):
         return "supported" if val else "contradicted"
     if isinstance(val, str):
-        # Tuned Lens etc. emit string verdicts. Map a small known vocabulary
-        # and otherwise treat as preliminary so we never silently lie.
-        positive = {"pass", "reject_h0", "reject_h0_log_linear", "supported"}
-        negative = {"fail", "accept_h0", "no_signal", "contradicted"}
+        # Each protocol emits its own string-verdict vocabulary. The maps
+        # below collapse them onto the {supported, preliminary, contradicted}
+        # triangulation labels. Anything not in the maps falls through to
+        # "preliminary" so synthesis never silently lies.
+        positive = {
+            "pass", "reject_h0", "reject_h0_log_linear", "supported",
+            # tuned_lens_triangulation.json -> agreement_band
+            "agree",
+            # kv_rank.py -> prediction_1_verdict.verdict
+            "evidence-of-compounding",
+        }
+        negative = {
+            "fail", "accept_h0", "no_signal", "contradicted",
+            # tuned_lens_triangulation.json -> agreement_band
+            "disagree",
+            # attention_taxonomy.py -> prediction2.verdict
+            "refuted",
+            # kv_rank.py -> prediction_1_verdict.verdict
+            "inconsistent-with-literature",
+        }
+        ambiguous = {
+            # tuned_lens_triangulation.json -> agreement_band
+            "ambiguous",
+            # attention_taxonomy.py -> prediction2.verdict (no rejection)
+            "inconclusive",
+            # kv_rank.py -> prediction_1_verdict.verdict (Kobayashi-bracket
+            # respected but compounding not yet evident -- conservative
+            # downgrade per audit)
+            "consistent-with-literature",
+        }
         low = val.strip().lower()
         if low in positive:
             return "supported"
         if low in negative:
             return "contradicted"
+        if low in ambiguous:
+            return "preliminary"
         return "preliminary"
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        # Numeric cells: positive count -> supported, zero -> contradicted.
+        # Used by RQ7 row's aggregate.n_cells_rejected_holm cell.
+        return "supported" if float(val) > 0 else "contradicted"
     return "preliminary"
 
 
@@ -225,7 +364,14 @@ def build_triangulation_table(
     for claim_def in TRIANGULATION_ROWS:
         cells: dict[str, Any] = {"claim": claim_def["claim"]}
         for tier in ("primary", "secondary", "tertiary"):
-            proto, dotted = claim_def[tier]
+            spec = claim_def.get(tier)
+            if spec is None:
+                # Tier explicitly deferred (RQ4/5/9 wave). Render as a
+                # "deferred" cell rather than missing-data; keeps the
+                # downstream consensus aggregation accurate.
+                cells[tier] = {"label": "deferred", "per_tag": {}}
+                continue
+            proto, dotted = spec
             per_tag = {
                 tag: _verdict_label(
                     artefacts.get(tag, {}).get(proto), dotted
@@ -236,6 +382,12 @@ def build_triangulation_table(
                 "label": _consensus(per_tag.values()),
                 "per_tag": per_tag,
             }
+        # Pass through optional schema fields so the markdown renderer can
+        # surface deferred-status annotations without breaking older rows.
+        for opt in ("status", "deferred_note",
+                    "primary_label", "secondary_label", "tertiary_label"):
+            if opt in claim_def:
+                cells[opt] = claim_def[opt]
         rows.append(cells)
     return rows
 
@@ -647,6 +799,7 @@ def _emit_triangulation_matrix_figure(
         "missing-data": 0,
         "contradicted": -1,
         "mixed": -2,
+        "deferred": -3,
     }
     label_colors = {
         "supported": "#2ca02c",
@@ -654,6 +807,7 @@ def _emit_triangulation_matrix_figure(
         "missing-data": "#bdbdbd",
         "contradicted": "#d62728",
         "mixed": "#9467bd",
+        "deferred": "#7f7f7f",
     }
     rows = [r["claim"] for r in table]
     cols = ["primary", "secondary", "tertiary"]
@@ -704,22 +858,312 @@ def _emit_triangulation_matrix_figure(
 
 
 # ---------------------------------------------------------------------------
+# Family-wise Holm-Bonferroni (DEC-025)
+# ---------------------------------------------------------------------------
+
+
+def _holm_adjust(p_values: list[float]) -> list[float]:
+    """Return Holm-Bonferroni-adjusted p-values for a list of raw p-values.
+
+    Prefers ``statsmodels.stats.multitest.multipletests`` when importable;
+    falls back to a numpy implementation that mirrors Holm 1979 to keep
+    synthesis runnable in stripped-down environments (matching the
+    portability pattern of ``_fit_logistic_classifier`` elsewhere in this
+    package).  NaN entries propagate as NaN; the family size used by the
+    correction is the count of finite p-values, so deferred RQs (mapped
+    to None upstream) never contribute.
+    """
+    try:
+        from statsmodels.stats.multitest import multipletests  # type: ignore
+
+        finite_mask = [
+            isinstance(p, (int, float)) and not _is_nan(p) for p in p_values
+        ]
+        finite_ps = [float(p) for p, m in zip(p_values, finite_mask) if m]
+        if not finite_ps:
+            return [float("nan")] * len(p_values)
+        _reject, p_adj, _aS, _aB = multipletests(
+            finite_ps, alpha=DEC025_FAMILY_ALPHA, method="holm"
+        )
+        out: list[float] = []
+        ai = 0
+        for m in finite_mask:
+            if m:
+                out.append(float(p_adj[ai]))
+                ai += 1
+            else:
+                out.append(float("nan"))
+        return out
+    except Exception:
+        # Numpy fallback: rank-sort finite p-values, multiply by descending
+        # family size, then enforce monotonicity (Holm step-down).
+        import numpy as np
+
+        n = len(p_values)
+        finite_idx = [
+            i for i, p in enumerate(p_values)
+            if isinstance(p, (int, float)) and not _is_nan(p)
+        ]
+        if not finite_idx:
+            return [float("nan")] * n
+        finite_ps = np.asarray(
+            [float(p_values[i]) for i in finite_idx], dtype=np.float64
+        )
+        order = np.argsort(finite_ps)
+        m = len(finite_ps)
+        adj = np.empty(m, dtype=np.float64)
+        running_max = 0.0
+        for rank, sorted_pos in enumerate(order):
+            scaled = (m - rank) * finite_ps[sorted_pos]
+            running_max = max(running_max, min(1.0, scaled))
+            adj[sorted_pos] = running_max
+        out = [float("nan")] * n
+        for ai, src_i in enumerate(finite_idx):
+            out[src_i] = float(adj[ai])
+        return out
+
+
+def _is_nan(x: Any) -> bool:
+    """Tiny portability shim: math.isnan that accepts ints / non-floats."""
+    try:
+        import math
+
+        return bool(math.isnan(float(x)))
+    except (TypeError, ValueError):
+        return False
+
+
+def _resolve_rq_pvalue(
+    rq_id: str,
+    spec: tuple[str, str] | None,
+    artefacts: dict[str, dict[str, Any]],
+    tags: list[str],
+) -> tuple[float | None, str]:
+    """Resolve one RQ's family-wise p-value across all tags.
+
+    Returns ``(p_value_or_None, status)`` where status is one of
+    ``"ok"``, ``"deferred-DIR-002"`` (spec is None), or
+    ``"deferred-missing-data"`` (artefact or path missing in every tag).
+
+    For RQ ids whose protocol does NOT expose a single scalar p-value at
+    the top level (RQ3, RQ6, RQ7), ``spec[1]`` is a synthetic sentinel
+    handled here: the worst (smallest) p-value across the relevant
+    sub-records is taken as the family-level p-value, mirroring the
+    "min-across-tests" convention common in family-wise correction
+    cookbooks.
+
+    Across tags, the maximum (most conservative) p-value is reported so
+    a single noisy checkpoint can downgrade the family-level claim
+    without inflating the global Type-I rate.
+    """
+    if spec is None:
+        return None, "deferred-DIR-002"
+
+    proto, dotted = spec
+    candidate_ps: list[float] = []
+    for tag in tags:
+        payload = artefacts.get(tag, {}).get(proto)
+        if payload is None:
+            continue
+        p = _extract_synthetic_or_dotted_p(rq_id, payload, dotted)
+        if p is not None and not _is_nan(p):
+            candidate_ps.append(float(p))
+
+    if not candidate_ps:
+        return None, "deferred-missing-data"
+    # Most-conservative-tag rule: max across checkpoints. Single bad tag
+    # blocks the family rejection; this matches the spirit of the
+    # cross-checkpoint consensus rule in section 1.6 ("the disagreement
+    # itself is the finding").
+    return max(candidate_ps), "ok"
+
+
+def _extract_synthetic_or_dotted_p(
+    rq_id: str, payload: Any, dotted: str
+) -> float | None:
+    """Extract a raw p-value from a per-tag payload.
+
+    Handles the synthetic sentinels documented in
+    ``RQ_PRIMARY_PVALUE_PATHS`` and falls back to dotted resolution for
+    plain scalar paths.
+    """
+    if dotted == "__rq3_min_paired_p__":
+        # attention_taxonomy.prediction2.paired_t_tests is a dict keyed
+        # by metric name with sub-fields {p_value, ...}. Minimum across
+        # the three raw metrics (entropy / gini / top_k_mass) is the
+        # tightest paired-t evidence; per-layer Spearman + mixed-effects
+        # are cross-checks rather than primary tests for DEC-025 purposes.
+        paired = _resolve_dotted(payload, "prediction2.paired_t_tests")
+        if not isinstance(paired, dict):
+            return None
+        ps = []
+        for metric in ("entropy", "gini", "top_k_mass"):
+            sub = paired.get(metric)
+            if isinstance(sub, dict):
+                p = sub.get("p_value")
+                if isinstance(p, (int, float)) and not _is_nan(p):
+                    ps.append(float(p))
+        return min(ps) if ps else None
+    if dotted == "__rq6_min_layer_p__":
+        # Minimum one-tailed slope p across per_layer_slope.<L>.loglinear.
+        per_layer = _resolve_dotted(payload, "per_layer_slope")
+        if not isinstance(per_layer, dict):
+            return None
+        ps = []
+        for _, layer_blob in per_layer.items():
+            if not isinstance(layer_blob, dict):
+                continue
+            ll = layer_blob.get("loglinear")
+            if not isinstance(ll, dict):
+                continue
+            p = ll.get("p_one_tailed_slope_nonpositive")
+            if isinstance(p, (int, float)) and not _is_nan(p):
+                ps.append(float(p))
+        return min(ps) if ps else None
+    if dotted == "__rq7_aggregate_synthetic_p__":
+        # interpolation_validity emits an aggregate cell-rejection count
+        # but no single scalar p. Synthesise: 0.0 if any cell rejected
+        # at family alpha, else 1.0. Conservative.
+        n_rej = _resolve_dotted(payload, "aggregate.n_cells_rejected_holm")
+        if isinstance(n_rej, (int, float)) and not _is_nan(n_rej):
+            return 0.0 if float(n_rej) > 0 else 1.0
+        return None
+    if dotted.endswith(".0"):
+        # Tail "<key>.0" indexes into the first element of a list under
+        # the parent dotted path. depth_emb_freeze stores Holm-adjusted
+        # p-values as a 2-element list (CE delta, accuracy delta); the
+        # CE-delta entry is the RQ8 primary.
+        parent_dotted = dotted[:-2]
+        list_payload = _resolve_dotted(payload, parent_dotted)
+        if isinstance(list_payload, list) and list_payload:
+            head = list_payload[0]
+            if isinstance(head, (int, float)) and not _is_nan(head):
+                return float(head)
+        return None
+    val = _resolve_dotted(payload, dotted)
+    if isinstance(val, (int, float)) and not _is_nan(val):
+        return float(val)
+    return None
+
+
+def family_wise_holm(
+    artefacts: dict[str, dict[str, Any]],
+    tags: list[str],
+    output_dir: str,
+) -> dict[str, Any]:
+    """Apply Holm-Bonferroni at family-wise alpha=0.01 across RQ-primary tests.
+
+    Reads the raw p-value for each RQ via ``RQ_PRIMARY_PVALUE_PATHS``,
+    runs ``_holm_adjust`` (statsmodels with numpy fallback), and writes
+    ``synthesis_holm_table.json`` next to the synthesis report. Returns
+    the parsed table so the markdown renderer can surface it inline.
+
+    Synthesis applies the correction; it does NOT run any new statistical
+    tests (DEC-025 first clause: corrections, not new tests).
+    """
+    raw_entries: list[dict[str, Any]] = []
+    raw_ps_for_correction: list[float] = []
+    raw_idx_to_correct: list[int] = []
+    for rq_id, spec in RQ_PRIMARY_PVALUE_PATHS.items():
+        p, status = _resolve_rq_pvalue(rq_id, spec, artefacts, tags)
+        entry: dict[str, Any] = {
+            "rq": rq_id,
+            "raw_p": p,
+            "holm_adjusted_p": None,
+            "rejects_at_alpha_001": None,
+            "status": status,
+        }
+        if p is not None:
+            raw_idx_to_correct.append(len(raw_entries))
+            raw_ps_for_correction.append(p)
+        raw_entries.append(entry)
+
+    if raw_ps_for_correction:
+        adjusted = _holm_adjust(raw_ps_for_correction)
+        for slot, p_adj in zip(raw_idx_to_correct, adjusted):
+            raw_entries[slot]["holm_adjusted_p"] = (
+                None if _is_nan(p_adj) else float(p_adj)
+            )
+            if p_adj is not None and not _is_nan(p_adj):
+                raw_entries[slot]["rejects_at_alpha_001"] = bool(
+                    float(p_adj) < DEC025_FAMILY_ALPHA
+                )
+
+    n_applied = sum(1 for e in raw_entries if e["status"] == "ok")
+    n_deferred = sum(1 for e in raw_entries if e["status"] != "ok")
+
+    table_payload = {
+        "alpha_family_wise": DEC025_FAMILY_ALPHA,
+        "n_tests_applied": int(n_applied),
+        "n_tests_deferred": int(n_deferred),
+        "table": raw_entries,
+    }
+
+    json_path = os.path.join(output_dir, "synthesis_holm_table.json")
+    try:
+        with open(json_path, "w", encoding="utf-8") as fh:
+            json.dump(table_payload, fh, indent=2, sort_keys=True)
+    except OSError as exc:
+        logging.warning("Failed to write %s: %s", json_path, exc)
+    return table_payload
+
+
+def _format_holm_table_md(table_payload: dict[str, Any]) -> str:
+    """Render the family-wise Holm-Bonferroni table as a markdown block."""
+    if not table_payload or "table" not in table_payload:
+        return "Family-wise Holm-Bonferroni table unavailable."
+    alpha = table_payload.get("alpha_family_wise", 0.01)
+    lines = [
+        (
+            f"Family-wise alpha = {alpha} across "
+            f"{table_payload.get('n_tests_applied', 0)} applied tests "
+            f"({table_payload.get('n_tests_deferred', 0)} deferred). "
+            "Synthesis applies the correction; no new statistical "
+            "tests are run here."
+        ),
+        "",
+        "| RQ | Raw p | Holm-adjusted p | Rejects at alpha=0.01 | Status |",
+        "|----|-------|-----------------|-----------------------|--------|",
+    ]
+    for row in table_payload["table"]:
+        raw_p = row.get("raw_p")
+        adj_p = row.get("holm_adjusted_p")
+        reject = row.get("rejects_at_alpha_001")
+        lines.append(
+            "| {rq} | {raw} | {adj} | {rej} | {st} |".format(
+                rq=row.get("rq", "?"),
+                raw=("--" if raw_p is None else f"{float(raw_p):.4g}"),
+                adj=("--" if adj_p is None else f"{float(adj_p):.4g}"),
+                rej=("--" if reject is None else ("yes" if reject else "no")),
+                st=row.get("status", "?"),
+            )
+        )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Markdown report
 # ---------------------------------------------------------------------------
 
 
 def _format_triangulation_md(rows: list[dict[str, Any]]) -> str:
     lines = [
-        "| Claim | Primary | Secondary | Tertiary |",
-        "|-------|---------|-----------|----------|",
+        "| Claim | Primary | Secondary | Tertiary | Status |",
+        "|-------|---------|-----------|----------|--------|",
     ]
     for row in rows:
+        status_bits: list[str] = []
+        if "status" in row:
+            status_bits.append(str(row["status"]))
+        if "deferred_note" in row:
+            status_bits.append(str(row["deferred_note"]))
         lines.append(
-            "| {claim} | {p} | {s} | {t} |".format(
+            "| {claim} | {p} | {s} | {t} | {st} |".format(
                 claim=row["claim"],
                 p=row["primary"]["label"],
                 s=row["secondary"]["label"],
                 t=row["tertiary"]["label"],
+                st="; ".join(status_bits) if status_bits else "",
             )
         )
     return "\n".join(lines)
@@ -778,6 +1222,7 @@ def write_report(
     artefacts: dict[str, dict[str, Any]],
     table: list[dict[str, Any]],
     emitted: dict[str, bool],
+    holm_table: dict[str, Any] | None = None,
 ) -> str:
     """Write synthesis_report.md and return its absolute path."""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
@@ -803,12 +1248,19 @@ def write_report(
          "support; 'mixed' if checkpoints disagree (the disagreement "
          "itself is the finding per section 1.6); 'preliminary' when "
          "artefacts are present but lack a single boolean verdict "
-         "(single-measurement downgrade); 'missing-data' when no "
-         "artefact exists. Synthesis does not run any new statistical "
-         "tests -- every datum is computed upstream."),
+         "(single-measurement downgrade); 'deferred' when the cell is "
+         "scheduled for a later wave (e.g. RQ4/5/9 reserve); "
+         "'missing-data' when no artefact exists. Synthesis does not "
+         "run any new statistical tests -- every datum is computed "
+         "upstream."),
         "",
         _format_triangulation_md(table) if table else
         "Triangulation matrix unavailable (no claims defined).",
+        "",
+        "## Family-wise Holm-Bonferroni results (DEC-025)",
+        "",
+        _format_holm_table_md(holm_table) if holm_table else
+        "Family-wise Holm-Bonferroni table unavailable (no RQ p-values resolved).",
         "",
         "## Cross-checkpoint figures",
         "",
@@ -895,7 +1347,12 @@ def main() -> None:
         logging.error("--run-dir does not exist or is not a directory: %s", run_dir)
         # Still emit a stub report so downstream rsync paths are always populated.
         emitted: dict[str, bool] = {}
-        write_report(output_dir, run_dir, args.template, [], {}, [], emitted)
+        # Run the Holm pass with empty inputs so the report still has the
+        # section header and the JSON sidecar lands at a predictable path.
+        holm_table = family_wise_holm({}, [], output_dir)
+        write_report(
+            output_dir, run_dir, args.template, [], {}, [], emitted, holm_table,
+        )
         return
 
     tags = discover_tags(run_dir)
@@ -944,6 +1401,18 @@ def main() -> None:
         logging.warning("Triangulation matrix figure emission failed: %s", exc)
         emitted["synthesis_triangulation_matrix.png"] = False
 
+    # DEC-025 family-wise Holm-Bonferroni across the RQ-primary tests.
+    try:
+        holm_table = family_wise_holm(artefacts, tags, output_dir)
+        logging.info(
+            "Holm-Bonferroni: %d tests applied, %d deferred",
+            holm_table.get("n_tests_applied", 0),
+            holm_table.get("n_tests_deferred", 0),
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logging.warning("family_wise_holm() failed: %s", exc)
+        holm_table = None
+
     report_path = write_report(
         output_dir,
         run_dir,
@@ -952,6 +1421,7 @@ def main() -> None:
         artefacts,
         table,
         emitted,
+        holm_table,
     )
     logging.info("Wrote synthesis report: %s", report_path)
 

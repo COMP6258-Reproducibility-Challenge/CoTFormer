@@ -525,4 +525,123 @@ if [ "$EXIT_CODE" -eq 0 ]; then
     echo "========================================="
 fi
 
+# ========================= DV-3 ATTENTION-PATTERN EVALUATION ===============
+#
+# Per-cell attention-pattern analysis at the penultimate repeat over the OOD
+# test set. Runs only on a clean training exit so we never analyse a
+# truncated checkpoint. The probe writes counting_dv3_attention_results.json
+# under $CKPT_DIR/dv3/ -- the bash script does NOT mirror the probe's
+# internal artefact paths (per the path-construction discipline at the top
+# of this file).
+#
+# Module-path discriminator: matches DV-2 (transformer.h for Arm A baseline,
+# transformer.h_mid for Arm B V1-V4) so the probe targets the correct block.
+#
+# DV-3 is per-cell rather than per-task: the analysis.counting_dv3_attention
+# CLI takes a single checkpoint and writes a single JSON; it has no --task
+# flag (verified against the argparse block of the module). This block
+# therefore mirrors DV-2's banner, training-success gate, module-path
+# discriminator, and error accumulator, but invokes the probe ONCE per cell
+# rather than looping over {task1, task2, task3}. See the README §Downstream
+# analysis row for the canonical CLI form.
+if [ "$EXIT_CODE" -eq 0 ]; then
+    if [ "$ARM" = "A" ]; then
+        DV3_MODULE_PATH="transformer.h"
+    else
+        DV3_MODULE_PATH="transformer.h_mid"
+    fi
+    DV3_CKPT_DIR="$EXPS_DIR/counting/$MODEL/$EXP_NAME"
+    DV3_OUT_DIR="$DV3_CKPT_DIR/dv3"
+    mkdir -p "$DV3_OUT_DIR"
+
+    echo ""
+    echo "========================================="
+    echo " DV-3 attention-pattern evaluation"
+    echo " Checkpoint:    $DV3_CKPT_DIR"
+    echo " Module path:   $DV3_MODULE_PATH"
+    echo " Started:       $(date)"
+    echo "========================================="
+
+    DV3_OVERALL_EC=0
+    python -u -m analysis.counting_dv3_attention \
+        --checkpoint "$DV3_CKPT_DIR" \
+        --checkpoint-file ckpt.pt \
+        --output-dir "$DV3_OUT_DIR" \
+        --seed "$SEED" \
+        --n-samples 500 \
+        --batch-size 4 \
+        --sequence-length "$SEQUENCE_LENGTH" \
+        --device cuda \
+        --config-mode raw \
+        --module-path "$DV3_MODULE_PATH"
+    DV3_OVERALL_EC=$?
+    if [ "$DV3_OVERALL_EC" -ne 0 ]; then
+        echo "WARNING: DV-3 exited $DV3_OVERALL_EC" >&2
+    fi
+
+    echo ""
+    echo "========================================="
+    echo " DV-3 finished: $(date)"
+    echo " Overall DV-3 EC: $DV3_OVERALL_EC"
+    echo " Results under:  $DV3_OUT_DIR/"
+    echo "========================================="
+fi
+
+# ========================= DV-4 ZERO-ABLATION EVALUATION ===================
+#
+# Per-cell causal zero-ablation per repeat over the OOD test set. Runs only
+# on a clean training exit so we never analyse a truncated checkpoint. The
+# probe writes counting_dv4_causal_results.json under $CKPT_DIR/dv4/ -- the
+# bash script does NOT mirror the probe's internal artefact paths (per the
+# path-construction discipline at the top of this file).
+#
+# Module-path discriminator: matches DV-2 / DV-3 (transformer.h for Arm A
+# baseline, transformer.h_mid for Arm B V1-V4).
+#
+# Like DV-3, DV-4 is per-cell rather than per-task: the
+# analysis.counting_dv4_causal CLI has no --task flag (verified against the
+# argparse block of the module). Same gate / banner / EC pattern as DV-3.
+if [ "$EXIT_CODE" -eq 0 ]; then
+    if [ "$ARM" = "A" ]; then
+        DV4_MODULE_PATH="transformer.h"
+    else
+        DV4_MODULE_PATH="transformer.h_mid"
+    fi
+    DV4_CKPT_DIR="$EXPS_DIR/counting/$MODEL/$EXP_NAME"
+    DV4_OUT_DIR="$DV4_CKPT_DIR/dv4"
+    mkdir -p "$DV4_OUT_DIR"
+
+    echo ""
+    echo "========================================="
+    echo " DV-4 zero-ablation evaluation"
+    echo " Checkpoint:    $DV4_CKPT_DIR"
+    echo " Module path:   $DV4_MODULE_PATH"
+    echo " Started:       $(date)"
+    echo "========================================="
+
+    DV4_OVERALL_EC=0
+    python -u -m analysis.counting_dv4_causal \
+        --checkpoint "$DV4_CKPT_DIR" \
+        --checkpoint-file ckpt.pt \
+        --output-dir "$DV4_OUT_DIR" \
+        --seed "$SEED" \
+        --n-samples 500 \
+        --batch-size 8 \
+        --sequence-length "$SEQUENCE_LENGTH" \
+        --device cuda \
+        --config-mode raw \
+        --module-path "$DV4_MODULE_PATH"
+    DV4_OVERALL_EC=$?
+    if [ "$DV4_OVERALL_EC" -ne 0 ]; then
+        echo "WARNING: DV-4 exited $DV4_OVERALL_EC" >&2
+    fi
+
+    echo ""
+    echo "========================================="
+    echo " DV-4 finished: $(date)"
+    echo " Overall DV-4 EC: $DV4_OVERALL_EC"
+    echo " Results under:  $DV4_OUT_DIR/"
+    echo "========================================="
+fi
+
 exit $EXIT_CODE
