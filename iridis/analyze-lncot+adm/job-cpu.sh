@@ -79,7 +79,7 @@ _build_versions() {
 }
 
 TRANSLATOR_EPOCHS=250
-TRANSLATOR_BATCH_SIZE=64
+TRANSLATOR_BATCH_SIZE=256
 TRANSLATOR_LR=1.0
 TRANSLATOR_MOMENTUM=0.9
 SEED=2357
@@ -415,8 +415,6 @@ else
     # forward-pass-only and intentionally omitted in the analysis-only path).
     python -m analysis.calibration.entropy_calibration \
         --analysis-only \
-        --n-per-condition "$DCAL_N_PER_CONDITION" \
-        --seed "$SEED" \
         --out "$DCAL_GPU_RUN"
 
     echo "  Protocol D-cal aggregation outputs:"

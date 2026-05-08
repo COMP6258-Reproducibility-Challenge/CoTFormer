@@ -809,7 +809,7 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--seed", type=int, default=2357)
     parser.add_argument(
-        "--out", type=str, required=True,
+        "--out", type=str, default=None,
         help="Output directory. In forward-pass mode receives "
              "metrics.csv + meta.json. In --analysis-only mode this "
              "is the parent of tier1/ + tier2/; aggregate/ is written here.",
@@ -825,11 +825,120 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument(
+        "--smoke-test", action="store_true",
+        help="Run a synthetic-CSV smoke test of the 4-gate analysis "
+             "pipeline (no forward pass, no checkpoint required) and exit.",
+    )
     return parser
+
+
+def _write_synthetic_metrics_csv(
+    path: str, n_per_condition: int, rng: np.random.Generator
+) -> None:
+    """Write a tier-shaped metrics.csv with synthetic per-sequence rows.
+
+    Condition A is sampled with low entropy + high target accuracy and
+    Condition B with high entropy + low target accuracy so the
+    Gate-4 Spearman + classifier path produces a non-trivial verdict.
+    Pure-numpy: no torch / transformers dependency reachable here.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow([
+            "seq_id", "condition", "entropy_full", "entropy_no_sink",
+            "sink_mass", "target_accuracy",
+        ])
+        seq_id = 0
+        for cond_label, e_mean, a_mean in (
+            ("A", 2.0, 0.7),  # low entropy, high accuracy
+            ("B", 6.0, 0.1),  # high entropy, low accuracy
+        ):
+            for _ in range(n_per_condition):
+                e_full = float(np.clip(rng.normal(e_mean, 0.5), 0.05, 8.0))
+                # Sink mass small + sink shift well below the 1-bit gate.
+                sink_mass = float(np.clip(rng.uniform(0.0, 0.05), 0.0, 1.0))
+                e_ns = float(np.clip(e_full - 0.05, 0.05, 8.0))
+                t_acc = float(np.clip(rng.normal(a_mean, 0.05), 0.0, 1.0))
+                writer.writerow([
+                    seq_id, cond_label, e_full, e_ns, sink_mass, t_acc,
+                ])
+                seq_id += 1
+
+
+def _smoke_test() -> None:
+    """Verify the 4-gate analysis pipeline end-to-end on synthetic CSVs.
+
+    Generates tier1/metrics.csv + tier2/metrics.csv in a tempdir with
+    50 sequences per condition (Condition A low-entropy / high-accuracy,
+    Condition B high-entropy / low-accuracy), runs ``_run_analysis_only``,
+    and asserts the four expected aggregate artefacts (spearman.json,
+    classifier.json, verdict.json, figure.png) plus a verdict label in
+    ``{PASS, AMBIGUOUS, FAIL, FAIL_baseline}``. CPU-only path: no
+    forward-pass code (``_forward_attention_gpt2`` /
+    ``_forward_attention_cotformer``) is invoked, so torch and
+    transformers stay unimported.
+    """
+    import tempfile
+
+    rng = np.random.default_rng(19937)
+    n_per_condition = 50
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for tier in ("tier1", "tier2"):
+            csv_path = os.path.join(tmpdir, tier, "metrics.csv")
+            _write_synthetic_metrics_csv(csv_path, n_per_condition, rng)
+
+        # Drive _run_analysis_only with a minimal Namespace; the function
+        # only reads ``args.out``.
+        ns = argparse.Namespace(out=tmpdir)
+        _run_analysis_only(ns)
+
+        aggregate_dir = os.path.join(tmpdir, "aggregate")
+        for artefact in (
+            "spearman.json", "classifier.json", "verdict.json", "figure.png",
+        ):
+            artefact_path = os.path.join(aggregate_dir, artefact)
+            if artefact == "figure.png":
+                # matplotlib is environment-optional; figure may be absent
+                # when matplotlib is missing, in which case the renderer
+                # silently returns. Note the absence rather than fail.
+                if not os.path.isfile(artefact_path):
+                    print(f"  note: {artefact} not produced (matplotlib missing?)")
+                    continue
+            assert os.path.isfile(artefact_path), (
+                f"missing aggregate artefact: {artefact_path}"
+            )
+
+        with open(os.path.join(aggregate_dir, "verdict.json")) as fh:
+            verdict_payload = json.load(fh)
+
+        valid_labels = {"PASS", "AMBIGUOUS", "FAIL", "FAIL_baseline"}
+        assert verdict_payload["verdict"] in valid_labels, (
+            f"unexpected verdict label: {verdict_payload['verdict']}"
+        )
+        assert math.isfinite(verdict_payload["spearman_rho"]), (
+            f"spearman_rho not finite: {verdict_payload['spearman_rho']}"
+        )
+        assert 0.0 <= verdict_payload["classifier_acc"] <= 1.0, (
+            f"classifier_acc out of [0, 1]: {verdict_payload['classifier_acc']}"
+        )
+
+        print("entropy_calibration smoke test PASS")
+        print(f"  verdict: {verdict_payload['verdict']}")
+        print(f"  spearman_rho = {verdict_payload['spearman_rho']:.4f}")
+        print(f"  classifier_acc = {verdict_payload['classifier_acc']:.4f}")
+        print(f"  artefacts written to (tempdir) {aggregate_dir}")
 
 
 def main() -> None:
     args = build_argparser().parse_args()
+    if args.smoke_test:
+        _smoke_test()
+        return
+    if args.out is None:
+        raise ValueError("main: --out is required unless --smoke-test is set")
     if args.analysis_only:
         _run_analysis_only(args)
     else:

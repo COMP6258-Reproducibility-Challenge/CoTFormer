@@ -861,6 +861,22 @@ manager); a future site-or-ablation script with the same shape
 must follow the same convention or document a deliberate
 deviation.
 
+**Sibling-pattern derogations to §8.5 (post-Phase-3)**: two additional
+analysis modules mirror the DV-4 lifecycle outside
+`analysis/common/collector.py`:
+
+- `analysis/counting_dv2_probe.py` -- paired-probe hidden-state capture;
+  counter-increment hook registered AFTER per-`h_mid[i]` capture hooks;
+  V1/V2 fallback to `h_mid[-1]` when `ln_mid` is `nn.Identity` or absent.
+- `analysis/depth_emb_freeze.py` -- depth-embedding ablation hooks;
+  counter-increment registered LAST so the freeze hook reads the
+  pre-bump repeat index. Same V1/V2 fallback discipline.
+
+Both are structurally analogous to the canonical `counting_dv4_causal`
+ablation; both honour the §8.8 ordering rule. Future scripts that
+follow this lifecycle should cite §8.8 in a top-of-file comment to
+make the pattern self-evident.
+
 ### 8.9 Workspace key-prefix module-path awareness
 
 The collector emits per-site cache files keyed by the trailing

@@ -363,7 +363,7 @@ def freeze_hooks(
             delattr(model, _COUNTER_ATTR)
 
 
-def _identity_marker_type():
+def _identity_marker_type() -> type:
     """Return ``nn.Identity`` for the ln_mid disable check."""
     import torch.nn as nn
     return nn.Identity

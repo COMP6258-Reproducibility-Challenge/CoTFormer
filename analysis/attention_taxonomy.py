@@ -142,6 +142,17 @@ SPEARMAN_LARGE_EFFECT = -0.5   # Cohen 1988 "large effect"
 MIXED_EFFECTS_ALPHA = 0.05     # §1.4 fixed-effect slope threshold
 EPS = 1e-12                    # numerical floor for log and divisions
 
+# RQ3 silhouette permutation-null gates per docs/extend-notes.md §1.2 RQ3.
+# The chi-squared p-value gate is the formal H0 falsifier; the silhouette
+# permutation null gates the "meaningful clustering detected" claim and
+# replaces the prior fixed Kaufman-Rousseeuw 0.25 cutoff (categorical
+# convention, not data-derived).
+RQ3_CHI2_ALPHA = 0.01           # cluster x layer chi-squared independence
+RQ3_SILHOUETTE_ALPHA = 0.05     # one-tailed empirical p-value vs perm null
+RQ3_DEFAULT_PERMUTATIONS = 1000  # DEC-026 family permutation count
+RQ3_FEATURE_REPEAT = 5           # canonical analysis anchor (final repeat)
+RQ3_MAX_CLUSTERS = 8             # hard cap on K = min(8, ceil(log2(H)))
+
 
 # --------------------------------------------------------------
 # Sparsity primitives (pure numpy; unit-test-friendly)
@@ -686,6 +697,338 @@ def prediction2_mixed_effects(
 
 
 # --------------------------------------------------------------
+# RQ3: silhouette permutation-null + chi-squared independence test
+# --------------------------------------------------------------
+
+
+# Feature columns used to embed each (layer, head) cell at the canonical
+# analysis repeat for k-means clustering. These are the per-head sparsity +
+# position-pattern features that the existing classify_head cascade already
+# consumes; reusing them keeps RQ3's "head specialisation" axis aligned with
+# the taxonomy axis defined by Protocol C. Sink-corrected variants are
+# included so a head that is purely sink-driven does not collapse onto a
+# content-attending head once the BOS column is masked.
+_RQ3_FEATURE_KEYS: tuple[str, ...] = (
+    "entropy",
+    "entropy_no_sink",
+    "gini",
+    "gini_no_sink",
+    "top_k_mass",
+    "top_k_mass_no_sink",
+    "sink_fraction",
+    "prev_token_fraction",
+)
+
+
+def _rq3_default_n_clusters(n_heads_total: int) -> int:
+    """Project convention K = ``min(RQ3_MAX_CLUSTERS, ceil(log2(n_heads)))``.
+
+    The log2 rule scales the cluster budget with cell count without
+    overfitting small panels: 4 heads -> K=2, 12 heads -> K=4, 252 heads
+    (21 layers x 12 heads) -> K=8. The hard cap prevents the silhouette
+    geometry from collapsing on high-dimensional, low-sample-count
+    splits when the panel grows beyond ~256 cells.
+    """
+    n = max(int(n_heads_total), 2)
+    if n <= 2:
+        return 2
+    return min(RQ3_MAX_CLUSTERS, int(math.ceil(math.log2(n))))
+
+
+def _rq3_build_feature_matrix(
+    panel: dict[str, np.ndarray],
+    repeats: list[int],
+    feature_repeat: int,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Stack per-(layer, head) feature vectors at the requested repeat.
+
+    Parameters
+    ----------
+    panel : dict[str, np.ndarray]
+        Each metric array has shape ``(n_layer, n_repeat, n_head)``.
+    repeats : list[int]
+        The 1-indexed repeat values present in the workspace, in the same
+        order as the panel's repeat axis.
+    feature_repeat : int
+        The 1-indexed repeat to anchor on (canonical: 5). When the
+        requested repeat is absent (e.g. a checkpoint trained with
+        n_repeat < 5), the largest available repeat is used as a
+        graceful fallback.
+
+    Returns
+    -------
+    features : np.ndarray
+        Shape ``(n_layer * n_head, n_features)`` standardised feature
+        matrix. Rows are layer-major: row index ``l * n_head + h``.
+    layer_index : np.ndarray
+        Shape ``(n_layer * n_head,)`` integer layer index per row;
+        used to build the L x K contingency table.
+    repeat_used : int
+        The actual repeat anchor index resolved (1-indexed).
+    """
+    if not repeats:
+        raise ValueError("_rq3_build_feature_matrix: empty repeats list")
+    if feature_repeat in repeats:
+        repeat_slot = repeats.index(feature_repeat)
+        repeat_used = feature_repeat
+    else:
+        # Fallback: largest available repeat (closest to canonical r=5).
+        repeat_used = max(repeats)
+        repeat_slot = repeats.index(repeat_used)
+
+    columns: list[np.ndarray] = []
+    for key in _RQ3_FEATURE_KEYS:
+        if key not in panel:
+            continue
+        slab = panel[key][:, repeat_slot, :]  # (n_layer, n_head)
+        columns.append(slab.reshape(-1).astype(np.float64))
+    if not columns:
+        raise ValueError(
+            "_rq3_build_feature_matrix: panel missing all RQ3 feature keys"
+        )
+    n_layer, _n_repeat, n_head = panel[_RQ3_FEATURE_KEYS[0]].shape
+    feats = np.column_stack(columns)  # (n_layer * n_head, n_features)
+
+    # Z-score standardisation: features span heterogeneous scales (entropy
+    # in bits, gini in [0, 1], fractions in [0, 1]); without rescaling the
+    # entropy axis dominates Euclidean distances and the silhouette
+    # collapses onto a single feature. Constant columns (zero variance)
+    # are left at the centred-zero state to avoid divide-by-zero.
+    mean = np.nanmean(feats, axis=0, keepdims=True)
+    std = np.nanstd(feats, axis=0, keepdims=True)
+    std_safe = np.where(std > EPS, std, 1.0)
+    feats_std = (feats - mean) / std_safe
+    # Replace any residual NaN (from a checkpoint where a feature column
+    # is uniformly NaN, e.g. n_repeat=1 paired-t fallback) with zero so
+    # k-means and silhouette do not raise.
+    feats_std = np.nan_to_num(feats_std, nan=0.0, posinf=0.0, neginf=0.0)
+
+    layer_index = np.repeat(np.arange(n_layer, dtype=np.int64), n_head)
+    return feats_std, layer_index, int(repeat_used)
+
+
+def _rq3_silhouette_permutation_null(
+    features: np.ndarray,
+    labels: np.ndarray,
+    n_permutations: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Build the silhouette empirical null by shuffling cluster labels.
+
+    Standard permutation-test convention: the cluster-label vector is
+    permuted (not the feature rows), so each draw assesses the
+    silhouette under the H0 "labels are independent of the feature
+    geometry". The features themselves are held fixed across draws,
+    which preserves all geometric structure that is not relational with
+    the cluster assignment.
+
+    Returns
+    -------
+    null : np.ndarray
+        Shape ``(n_permutations,)`` array of silhouette scores under
+        the shuffled-label null. NaN entries (e.g. when a permutation
+        happens to produce only one effective cluster) are propagated
+        and treated as non-rejecting in the empirical p-value.
+    """
+    from sklearn.metrics import silhouette_score
+
+    null = np.full(int(n_permutations), np.nan, dtype=np.float64)
+    labels_copy = labels.copy()
+    for i in range(int(n_permutations)):
+        rng.shuffle(labels_copy)
+        # Skip degenerate permutations that collapse to a single cluster.
+        if np.unique(labels_copy).shape[0] < 2:
+            continue
+        try:
+            null[i] = float(silhouette_score(features, labels_copy, metric="euclidean"))
+        except ValueError:
+            # silhouette undefined for n_clusters <= 1; leave NaN.
+            continue
+    return null
+
+
+def rq3_silhouette_chi2_test(
+    panel: dict[str, np.ndarray],
+    repeats: list[int],
+    n_clusters: int | None = None,
+    n_permutations: int = RQ3_DEFAULT_PERMUTATIONS,
+    seed: int = 2357,
+    feature_repeat: int = RQ3_FEATURE_REPEAT,
+) -> dict[str, Any]:
+    """RQ3 silhouette permutation-null + chi-squared independence test.
+
+    Tests H0 "head-cluster assignments are uniformly distributed across
+    layers" (``docs/extend-notes.md`` §1.2 RQ3). Falsification requires
+    BOTH gates: chi-squared independence p < 0.01 AND silhouette beats
+    the 95-percentile of a 1000-permutation label-shuffle null (one-tailed
+    p < 0.05). The silhouette permutation null replaces the prior fixed
+    Kaufman-Rousseeuw 0.25 cutoff per §1.2 RQ3.
+
+    Operates as a SECONDARY output alongside Prediction-2 paired-t
+    triangulation; both are emitted in the per-checkpoint JSON.
+
+    Parameters
+    ----------
+    panel : dict[str, np.ndarray]
+        Per-metric ``(n_layer, n_repeat, n_head)`` arrays produced by
+        ``_analyse_workspace``.
+    repeats : list[int]
+        1-indexed repeat values present in the panel (same order as the
+        panel's repeat axis).
+    n_clusters : int, optional
+        Override for K. Defaults to the project convention
+        ``min(RQ3_MAX_CLUSTERS, ceil(log2(n_layer * n_head)))``.
+    n_permutations : int
+        Number of label-shuffle draws for the silhouette null. Default
+        ``RQ3_DEFAULT_PERMUTATIONS`` (1000) per the DEC-026 permutation-count
+        family used by Prediction 2.
+    seed : int
+        Seeds both ``KMeans`` (deterministic init) and the permutation
+        ``np.random.Generator``.
+    feature_repeat : int
+        1-indexed repeat to anchor the feature vectors on. Default 5
+        (final repeat). Falls back to the largest available repeat when
+        ``feature_repeat`` is absent.
+
+    Returns
+    -------
+    out : dict
+        Result dict with the schema documented in the module docstring
+        / DIR-001 §1.6 row 4 spec; verdict is one of "supported",
+        "preliminary", or "contradicted".
+    """
+    try:
+        from sklearn.cluster import KMeans
+        from sklearn.metrics import silhouette_score
+    except ImportError:
+        return {
+            "sklearn_available": False,
+            "verdict": "preliminary",
+            "rejects_h0": False,
+            "note": "sklearn unavailable; RQ3 silhouette test could not run",
+        }
+    try:
+        from scipy.stats import chi2_contingency
+    except ImportError:
+        return {
+            "scipy_available": False,
+            "verdict": "preliminary",
+            "rejects_h0": False,
+            "note": "scipy unavailable; RQ3 chi-squared test could not run",
+        }
+
+    features, layer_index, repeat_used = _rq3_build_feature_matrix(
+        panel, repeats, feature_repeat
+    )
+    n_cells = features.shape[0]
+    if n_cells < 4:
+        return {
+            "sklearn_available": True,
+            "scipy_available": True,
+            "verdict": "preliminary",
+            "rejects_h0": False,
+            "note": f"insufficient cells for clustering (n={n_cells})",
+        }
+
+    K = int(n_clusters) if n_clusters is not None else _rq3_default_n_clusters(n_cells)
+    K = max(2, min(K, n_cells - 1))
+
+    kmeans = KMeans(n_clusters=K, random_state=seed, n_init=10)
+    labels = kmeans.fit_predict(features)
+    n_effective = int(np.unique(labels).shape[0])
+
+    # L x K contingency table for the chi-squared independence test.
+    n_layer = int(layer_index.max()) + 1
+    contingency = np.zeros((n_layer, K), dtype=np.int64)
+    for row, lab in zip(layer_index, labels):
+        contingency[int(row), int(lab)] += 1
+
+    chi2_stat = float("nan")
+    chi2_p = float("nan")
+    chi2_dof = -1
+    if n_effective >= 2:
+        # Drop empty cluster columns; chi2_contingency rejects all-zero rows or
+        # columns with a "internally computed table of expected frequencies has
+        # a zero element" error.
+        col_mask = contingency.sum(axis=0) > 0
+        row_mask = contingency.sum(axis=1) > 0
+        reduced = contingency[np.ix_(row_mask, col_mask)]
+        if reduced.shape[0] >= 2 and reduced.shape[1] >= 2:
+            try:
+                chi2_stat_v, chi2_p_v, chi2_dof_v, _expected = chi2_contingency(reduced)
+                chi2_stat = float(chi2_stat_v)
+                chi2_p = float(chi2_p_v)
+                chi2_dof = int(chi2_dof_v)
+            except ValueError:
+                # Degenerate table; leave as NaN -> chi2 gate fails.
+                pass
+
+    # Observed silhouette + permutation null.
+    if n_effective >= 2:
+        observed_silhouette = float(silhouette_score(features, labels, metric="euclidean"))
+        rng = np.random.default_rng(seed)
+        null = _rq3_silhouette_permutation_null(
+            features, labels, n_permutations=n_permutations, rng=rng,
+        )
+        finite_null = null[np.isfinite(null)]
+        if finite_null.size > 0:
+            # Empirical one-tailed p-value: (1 + #(null >= observed)) / (M + 1).
+            silhouette_p = float(
+                (1.0 + np.sum(finite_null >= observed_silhouette))
+                / (finite_null.size + 1.0)
+            )
+            null_q95 = float(np.quantile(finite_null, 0.95))
+        else:
+            silhouette_p = float("nan")
+            null_q95 = float("nan")
+    else:
+        observed_silhouette = float("nan")
+        silhouette_p = float("nan")
+        null_q95 = float("nan")
+
+    chi2_pass = bool(np.isfinite(chi2_p) and chi2_p < RQ3_CHI2_ALPHA)
+    silhouette_pass = bool(
+        np.isfinite(silhouette_p) and silhouette_p < RQ3_SILHOUETTE_ALPHA
+    )
+    rejects_h0 = chi2_pass and silhouette_pass
+    if rejects_h0:
+        verdict = "supported"
+    elif chi2_pass or silhouette_pass:
+        verdict = "preliminary"
+    else:
+        # Neither gate passes (or chi2_p is NaN / above 0.05): contradicted.
+        verdict = "contradicted"
+
+    return {
+        "sklearn_available": True,
+        "scipy_available": True,
+        "n_clusters": int(K),
+        "n_clusters_effective": n_effective,
+        "n_permutations": int(n_permutations),
+        "feature_repeat": int(repeat_used),
+        "feature_keys": list(_RQ3_FEATURE_KEYS),
+        "n_features": int(features.shape[1]),
+        "n_cells": int(n_cells),
+        "chi2": {
+            "statistic": chi2_stat,
+            "p_value": chi2_p,
+            "dof": chi2_dof,
+            "alpha": RQ3_CHI2_ALPHA,
+            "rejects_uniform": chi2_pass,
+        },
+        "silhouette": {
+            "observed": observed_silhouette,
+            "null_p_value": silhouette_p,
+            "null_q95": null_q95,
+            "alpha": RQ3_SILHOUETTE_ALPHA,
+            "beats_null_q95": silhouette_pass,
+        },
+        "verdict": verdict,
+        "rejects_h0": bool(rejects_h0),
+    }
+
+
+# --------------------------------------------------------------
 # Workspace I/O
 # --------------------------------------------------------------
 
@@ -917,6 +1260,8 @@ def _analyse_workspace(
 
 def _build_results_payload(
     analysed: dict[str, Any],
+    rq3_n_permutations: int = RQ3_DEFAULT_PERMUTATIONS,
+    rq3_seed: int = 2357,
 ) -> dict[str, Any]:
     """Assemble the JSON-serialisable results from the analysed panel."""
     panel = analysed["panel"]
@@ -1076,6 +1421,17 @@ def _build_results_payload(
                 "counts": counts,
             })
 
+    # RQ3 secondary output: silhouette permutation null + chi-squared
+    # independence test on the (layer, head) cluster panel at the final
+    # repeat. Runs alongside Prediction-2 paired-t triangulation per the
+    # §1.6 row 4 reconciliation; uses a fully separate result schema.
+    rq3_silhouette_chi2 = rq3_silhouette_chi2_test(
+        panel,
+        repeats=analysed["repeats"],
+        n_permutations=rq3_n_permutations,
+        seed=rq3_seed,
+    )
+
     payload = {
         "group": analysed["group"],
         "layers": analysed["layers"],
@@ -1092,6 +1448,7 @@ def _build_results_payload(
             "verdict": verdict,
             "verdict_meta": verdict_meta,
         },
+        "rq3_silhouette_chi2": rq3_silhouette_chi2,
         "per_head": per_head_records,
         "per_layer_repeat_histogram": histogram,
         "constants": {
@@ -1104,6 +1461,8 @@ def _build_results_payload(
             "validation_entropy_gate_bits": VALIDATION_ENTROPY_GATE,
             "spearman_large_effect_threshold": SPEARMAN_LARGE_EFFECT,
             "mixed_effects_alpha": MIXED_EFFECTS_ALPHA,
+            "rq3_chi2_alpha": RQ3_CHI2_ALPHA,
+            "rq3_silhouette_alpha": RQ3_SILHOUETTE_ALPHA,
         },
     }
     return payload
@@ -1283,6 +1642,13 @@ def build_argparser() -> argparse.ArgumentParser:
         "--top-k", type=int, default=TOP_K,
         help=f"k for the top-k mass metric (default {TOP_K})",
     )
+    parser.add_argument(
+        "--rq3-n-permutations", type=int, default=RQ3_DEFAULT_PERMUTATIONS,
+        help=(
+            "RQ3 silhouette permutation-null draw count "
+            f"(default {RQ3_DEFAULT_PERMUTATIONS}; DEC-026 family)"
+        ),
+    )
     return parser
 
 
@@ -1309,7 +1675,11 @@ def main() -> None:
         seq_length_fallback=args.seq_length,
         top_k=args.top_k,
     )
-    payload = _build_results_payload(analysed)
+    payload = _build_results_payload(
+        analysed,
+        rq3_n_permutations=args.rq3_n_permutations,
+        rq3_seed=args.seed,
+    )
 
     results_path = os.path.join(args.output_dir, "attention_taxonomy_results.json")
     with open(results_path, "w") as fh:

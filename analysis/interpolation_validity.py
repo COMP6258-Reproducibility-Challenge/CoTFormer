@@ -611,7 +611,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--checkpoint",
         type=str,
-        required=True,
+        default=None,
         help="Checkpoint directory containing summary.json + ckpt file",
     )
     parser.add_argument(
@@ -623,7 +623,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workspace",
         type=str,
-        required=True,
+        default=None,
         help=(
             "Workspace directory consumed for residual / attn / router "
             "captures; auto-populated via a single forward pass when empty"
@@ -632,7 +632,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=str,
-        required=True,
+        default=None,
         help="Output directory for interpolation_validity_*.json / *.png",
     )
     parser.add_argument(
@@ -688,6 +688,14 @@ def build_argparser() -> argparse.ArgumentParser:
         default=ALPHA_FAMILY,
         help=f"Family-wise alpha for Holm-Bonferroni (default {ALPHA_FAMILY})",
     )
+    parser.add_argument(
+        "--smoke-test",
+        action="store_true",
+        help=(
+            "Run the synthetic-data smoke test of the permutation-null + "
+            "Holm-Bonferroni primitives and exit (no checkpoint required)"
+        ),
+    )
     return parser
 
 
@@ -715,8 +723,100 @@ def _write_short_circuit(
     print(f"interpolation_validity: wrote {out_path} (not_applicable: {reason})")
 
 
+def _smoke_test() -> None:
+    """Verify the permutation-null primitives on synthetic data.
+
+    Generates a random per-(layer, repeat, position) value array with a
+    deterministic seed (project convention 19937), constructs a small
+    clone-set + matched-size control under H0 (exchangeable labels), and
+    exercises ``_diff_of_means``, ``_permutation_null``, ``_per_cell_test``,
+    and ``_holm_bonferroni``. Asserts shape, finiteness, and the
+    Holm step-down monotonicity property; exits non-zero on any failure.
+    Pure-numpy: no torch import is reachable from this path.
+    """
+    rng = np.random.default_rng(19937)
+    n_positions = 32
+
+    # Synthetic per-position scalar values; H0 holds (random) so the
+    # observed |diff of means| should sit near the centre of the null.
+    values = rng.normal(size=(n_positions,)).astype(np.float64)
+    clone_idx = np.arange(0, n_positions // 2, dtype=np.int64)
+    control_idx = np.arange(n_positions // 2, n_positions, dtype=np.int64)
+
+    # _diff_of_means: finite scalar on a balanced split.
+    labels = np.concatenate([
+        np.ones(clone_idx.size, dtype=np.int64),
+        np.zeros(control_idx.size, dtype=np.int64),
+    ])
+    pool_values = values[np.concatenate([clone_idx, control_idx])]
+    obs = _diff_of_means(pool_values, labels)
+    assert math.isfinite(obs), f"_diff_of_means is not finite: {obs}"
+
+    # _permutation_null: shape and finite-element discipline.
+    n_perm = 200
+    null = _permutation_null(pool_values, labels, n_perm, rng)
+    assert null.shape == (n_perm,), f"null shape {null.shape}"
+    assert np.all(np.isfinite(null)), "permutation null has non-finite entries"
+
+    # _per_cell_test: end-to-end one-cell test produces the expected keys.
+    test = _per_cell_test(values, clone_idx, control_idx, n_perm, rng)
+    expected_keys = {"stat", "null_q997", "p_uncorrected", "n_clone", "n_control"}
+    assert expected_keys.issubset(test.keys()), f"missing keys: {expected_keys - test.keys()}"
+    assert math.isfinite(test["stat"]), f"test stat not finite: {test}"
+    assert math.isfinite(test["null_q997"]), f"null_q997 not finite: {test}"
+    assert 0.0 < test["p_uncorrected"] <= 1.0, f"p_uncorrected out of range: {test}"
+    assert test["n_clone"] == clone_idx.size
+    assert test["n_control"] == control_idx.size
+
+    # _holm_bonferroni: step-down monotone (sorted adjusted p's are
+    # non-decreasing) and decisions consistent with adjusted p <= alpha
+    # at the rejected end of the order.
+    raw_p = [0.001, 0.02, 0.04, 0.5, 0.9]
+    decisions, p_adj = _holm_bonferroni(raw_p, alpha=0.05)
+    assert len(decisions) == len(raw_p) and len(p_adj) == len(raw_p)
+    sorted_adj = sorted(p_adj)
+    for k in range(1, len(sorted_adj)):
+        assert sorted_adj[k] >= sorted_adj[k - 1] - 1e-12, (
+            f"Holm-adjusted p-values not monotone non-decreasing: {sorted_adj}"
+        )
+
+    # _select_clone_and_control: small synthetic score vector with both
+    # low- and high-score regions. Both arrays must come back non-empty.
+    scores = rng.uniform(0.0, 1.0, size=(128,))
+    scores[:20] = 0.05  # force a low-score pool
+    sel_clone, sel_control = _select_clone_and_control(scores, clone_size=8, rng=rng)
+    assert sel_clone.size > 0 and sel_control.size > 0, (
+        f"clone/control selection empty: clone={sel_clone.size}, control={sel_control.size}"
+    )
+    assert sel_clone.size == sel_control.size, (
+        f"clone and control sizes must match: {sel_clone.size} vs {sel_control.size}"
+    )
+
+    print("interpolation_validity smoke test PASS")
+    print(f"  permutation null shape OK: {null.shape}")
+    print(f"  Holm step-down monotone OK: {sorted_adj}")
+    print(f"  test stat finite: {test['stat']:.4f} (n_perm={n_perm})")
+    print(
+        f"  clone/control selection OK: clone={sel_clone.size}, "
+        f"control={sel_control.size}"
+    )
+
+
 def main() -> None:
     args = build_argparser().parse_args()
+
+    if args.smoke_test:
+        _smoke_test()
+        return
+
+    parser = build_argparser()
+    if not args.checkpoint:
+        parser.error("--checkpoint is required when --smoke-test is not set")
+    if not args.workspace:
+        parser.error("--workspace is required when --smoke-test is not set")
+    if not args.output_dir:
+        parser.error("--output-dir is required when --smoke-test is not set")
+
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(args.workspace, exist_ok=True)
 

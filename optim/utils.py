@@ -76,6 +76,18 @@ def eval_counting(model, data_val_iter, device='cpu', max_num_batches=24, ctx=nu
     ``loss_mask``. Returns ``(val_acc, val_loss, val_perplexity, avg_depth)``
     matching the OWT2 ``eval`` contract; ``avg_depth`` is always None because
     counting models do not report a router depth.
+
+    OOD-length override (RQ9 DV-1)
+    ------------------------------
+    This helper is length-agnostic; the per-sample sequence length is
+    determined at dataset-construction time by ``length_range`` in
+    ``data.counting.CountingDataset``. To run the eval at an OOD length
+    L, the caller passes ``ood_length=L`` to
+    ``data.counting.get_counting_data`` (or constructs a
+    ``CountingDataset`` directly with ``length_range=(L, L)`` and a
+    seed disjoint from the in-distribution val split). The DataLoader
+    built over that dataset is then iterated here unchanged; no
+    signature or branch change is required in ``eval_counting``.
     """
     assert model.training is False
 

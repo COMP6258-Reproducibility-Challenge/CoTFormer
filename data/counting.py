@@ -225,7 +225,10 @@ def prepare_counting_dataset(args: Namespace) -> None:
     return None
 
 
-def get_counting_data(args: Namespace) -> dict[str, "CountingDataset"]:
+def get_counting_data(
+    args: Namespace,
+    ood_length: int | None = None,
+) -> dict[str, "CountingDataset"]:
     """Return ``{"train": dataset, "val": dataset}`` CountingDataset map.
 
     The map is consumed by ``main.py`` via ``data.utils.get_dataset`` +
@@ -237,6 +240,24 @@ def get_counting_data(args: Namespace) -> dict[str, "CountingDataset"]:
     Train / val seeds are derived from ``args.data_seed`` (or
     ``args.seed`` when ``data_seed`` is None) by adding 0 / 1000
     respectively, so the splits are disjoint.
+
+    Parameters
+    ----------
+    args : Namespace
+        Standard project args; ``sequence_length``, ``seed`` /
+        ``data_seed``, ``counting_train_samples``,
+        ``counting_val_samples`` are read from here.
+    ood_length : int | None
+        Optional OOD-length override for the val split. When set, the
+        val split is rebuilt at a fixed sequence length ``L =
+        ood_length`` drawn from ``TE200_OOD_LENGTH_RANGE`` (start range
+        constrained to ``[0, max_out - L]`` so target tokens stay
+        in-vocab). Triggered by ``eval.py --eval-length`` for the RQ9
+        DV-1 OOD accuracy sweep. The val split's seed is bumped by
+        ``+2000`` (the project's "ood" seed convention) so OOD eval
+        sequences are disjoint from in-distribution train and val.
+        The train split is unchanged regardless of ``ood_length``;
+        this override is eval-only.
     """
     base_seed = int(args.data_seed) if getattr(args, "data_seed", None) is not None else int(args.seed)
     sequence_length = int(getattr(args, "sequence_length", 256))
@@ -257,12 +278,35 @@ def get_counting_data(args: Namespace) -> dict[str, "CountingDataset"]:
         max_out=max_out,
         length_range=TE200_TRAIN_LENGTH_RANGE,
     )
-    val = CountingDataset(
-        split="val",
-        seed=base_seed + 1000,
-        num_samples=val_n,
-        sequence_length=sequence_length,
-        max_out=max_out,
-        length_range=TE200_TRAIN_LENGTH_RANGE,
-    )
+    if ood_length is None:
+        val = CountingDataset(
+            split="val",
+            seed=base_seed + 1000,
+            num_samples=val_n,
+            sequence_length=sequence_length,
+            max_out=max_out,
+            length_range=TE200_TRAIN_LENGTH_RANGE,
+        )
+    else:
+        ood_lo, ood_hi = TE200_OOD_LENGTH_RANGE
+        if not (ood_lo <= int(ood_length) <= ood_hi):
+            raise ValueError(
+                f"get_counting_data: ood_length={ood_length} outside the "
+                f"OOD length range {TE200_OOD_LENGTH_RANGE}; the OOD eval "
+                f"split is defined for L in that closed interval."
+            )
+        L = int(ood_length)
+        if sequence_length < L + 1:
+            raise ValueError(
+                f"get_counting_data: sequence_length={sequence_length} too "
+                f"small for ood_length={L}; require sequence_length >= L+1."
+            )
+        val = CountingDataset(
+            split="ood",
+            seed=base_seed + 2000,
+            num_samples=val_n,
+            sequence_length=sequence_length,
+            max_out=max_out,
+            length_range=(L, L),
+        )
     return {"train": train, "val": val}

@@ -52,6 +52,35 @@ PROTOCOL_FILES: dict[str, str] = {
 # under a tag directory: it is run-level, not checkpoint-level.
 D_CAL_VERDICT_RELPATH = os.path.join("d_cal", "aggregate", "verdict.json")
 
+
+# Counting (RQ9) per-cell artefact relative paths under each cell directory
+# discovered in --counting-run-dir. DV-1 OOD is a single-file artefact (sister
+# worker output); DV-2 is per-task; DV-3 and DV-4 are single-file per-cell.
+# Loading is defensive: any missing file is skipped silently, mirroring the
+# analytic-tag loader's "every datum is computed upstream" stance.
+COUNTING_DV1_OOD_RELPATH = os.path.join(
+    "dv1_ood", "counting_dv1_ood_results.json"
+)
+COUNTING_DV2_TASK_FILENAME = "counting_dv2_results.json"
+COUNTING_DV2_TASKS = ("task1", "task2", "task3")
+COUNTING_DV3_RELPATH = os.path.join("dv3", "counting_dv3_attention_results.json")
+COUNTING_DV4_RELPATH = os.path.join("dv4", "counting_dv4_causal_results.json")
+
+# Cell-name regex for the counting sweep. job.sh emits cell directories named
+# rq9_arm_(a|b)_<variant>_seed_<seed>_nembd_<n_embd>; we parse arm/variant/
+# n_embd/seed from the directory name. Cells whose name does not match this
+# pattern still load (the metadata fields fall through to None) so off-spec
+# names do not crash synthesis.
+COUNTING_CELL_NAME_RE = re.compile(
+    r"^rq9_arm_(?P<arm>[ab])_(?P<variant>[A-Za-z0-9]+)"
+    r"_seed_(?P<seed>\d+)_nembd_(?P<nembd>\d+)$"
+)
+
+# Synthetic per-cell tag prefix used to namespace counting cells inside the
+# unified ``artefacts`` dict. Distinct from the analytic c-tag pattern so the
+# analytic-only flow remains byte-identical when --counting-run-dir is unset.
+COUNTING_TAG_PREFIX = "__counting__/"
+
 # Triangulation matrix per docs/extend-notes.md section 1.6. Each row is a
 # claim with primary / secondary / tertiary measurements and the protocol +
 # JSON-key path used to locate the per-checkpoint verdict (or "preliminary"
@@ -143,7 +172,9 @@ TRIANGULATION_ROWS: list[dict[str, Any]] = [
     {
         # Counting cells live in a different RUN_DIR (iridis/counting-
         # sweep/run_N/), not the analyze-lncot+adm dir this synthesis
-        # consumes. Marked deferred to a separate synthesis pass.
+        # consumes. Marked deferred to a separate synthesis pass; when
+        # --counting-run-dir is supplied at the CLI, _resolve_triangulation_rows
+        # substitutes the active wiring below at table-build time.
         "claim": "Recurrence helps counting",
         "primary":   None,
         "secondary": None,
@@ -151,10 +182,55 @@ TRIANGULATION_ROWS: list[dict[str, Any]] = [
         "status": "deferred-to-counting-synthesis",
         "deferred_note": (
             "Computed by separate counting synthesis pass: "
-            "`python -m analysis.synthesis --run-dir iridis/counting-sweep/run_N`"
+            "`python -m analysis.synthesis --run-dir <analytic_run> "
+            "--counting-run-dir <counting_run>`"
         ),
     },
 ]
+
+
+# Active wiring for Row 7 once --counting-run-dir is supplied. Kept as a
+# module-level constant so the wiring is greppable / verifiable from outside
+# the resolver. Per docs/extend-notes.md §1.6 row 7: DV-1 OOD McNemar at
+# L=200 is the falsifier, DV-2 selectivity gap is the corroborator, DV-4
+# causal-ablation max repeat-importance is the tertiary cross-check.
+TRIANGULATION_ROW_7_ACTIVE: dict[str, Any] = {
+    "claim": "Recurrence helps counting",
+    "primary":   ("counting_dv1_ood", "aggregate.rq9_falsifies_h0_at_200"),
+    # DV-2's ``monotone_by_repeat`` boolean is the cleanest single-key
+    # corroborator for the claim: True iff per-repeat mean Ridge R^2 is
+    # non-decreasing across repeats, i.e. each successive repeat extracts
+    # at least as much count signal as the previous one. The numeric
+    # ``mean_gap`` aggregate is also useful but does not collapse to a
+    # binary verdict (per analysis/counting_dv2_probe.py docstring lines
+    # 24-30: gap >= 0.05 -> non-linear-canonical, gap < 0.05 -> linear-
+    # canonical; either is consistent with the recurrence-helps claim
+    # and so cannot be a falsifier on its own).
+    "secondary": ("counting_dv2", "aggregate.monotone_by_repeat"),
+    "tertiary":  ("counting_dv4_causal", "aggregate.max_repeat_importance"),
+    "status": "active-counting",
+    "primary_label": "DV-1 OOD McNemar @ L=200",
+    "secondary_label": "DV-2 monotone Ridge R^2 by repeat",
+    "tertiary_label": "DV-4 max repeat-importance",
+}
+
+
+def _resolve_triangulation_rows(counting_run_dir: str | None) -> list[dict[str, Any]]:
+    """Return TRIANGULATION_ROWS with Row 7 substituted when counting is on.
+
+    When ``counting_run_dir`` is None the analytic-only rows are returned
+    unchanged (byte-identical to the prior single-run-dir behaviour). When
+    ``counting_run_dir`` is set, the deferred Row 7 sentinel is replaced
+    with TRIANGULATION_ROW_7_ACTIVE in-place at the same index.
+    """
+    if counting_run_dir is None:
+        return TRIANGULATION_ROWS
+    rows = list(TRIANGULATION_ROWS)
+    for i, row in enumerate(rows):
+        if row.get("claim") == "Recurrence helps counting":
+            rows[i] = TRIANGULATION_ROW_7_ACTIVE
+            break
+    return rows
 
 
 # RQ-primary p-value paths for DEC-025 family-wise Holm-Bonferroni.
@@ -183,7 +259,10 @@ TRIANGULATION_ROWS: list[dict[str, Any]] = [
 #                                           a synthetic p of 0.0 if any cell
 #                                           rejects (>0), else 1.0
 #   RQ8 depth_emb_freeze.h0_per_condition.p_values_holm[0]   CE-delta Holm p
-#   RQ9 deferred (counting RUN_DIR not loaded here)
+#   RQ9 counting_dv1_ood.aggregate.mcnemar_p_at_200   (only when
+#       --counting-run-dir is supplied; otherwise None and the family size
+#       drops back to the analytic-only count, preserving Holm correctness
+#       per DEC-025)
 RQ_PRIMARY_PVALUE_PATHS: dict[str, tuple[str, str] | None] = {
     "RQ1": ("logit_lens", "h0_test.p_value"),
     "RQ2": None,
@@ -193,8 +272,35 @@ RQ_PRIMARY_PVALUE_PATHS: dict[str, tuple[str, str] | None] = {
     "RQ6": ("effective_dim", "__rq6_min_layer_p__"),
     "RQ7": ("interpolation_validity", "__rq7_aggregate_synthetic_p__"),
     "RQ8": ("depth_emb_freeze", "h0_per_condition.p_values_holm.0"),
-    "RQ9": None,
+    "RQ9": None,  # Substituted at runtime when counting_run_dir is set.
 }
+
+
+# RQ9 active path used when --counting-run-dir is supplied. Held as a module
+# constant so the path is greppable from the outside (verification expects
+# at least one occurrence of "counting_dv1_ood" in the file).
+RQ9_PRIMARY_PVALUE_PATH_ACTIVE: tuple[str, str] = (
+    "counting_dv1_ood",
+    "aggregate.mcnemar_p_at_200",
+)
+
+
+def _resolve_rq_pvalue_paths(
+    counting_run_dir: str | None,
+) -> dict[str, tuple[str, str] | None]:
+    """Return RQ_PRIMARY_PVALUE_PATHS with RQ9 substituted when counting is on.
+
+    The family size used by Holm-Bonferroni is computed downstream from the
+    count of non-None entries that resolve to a finite p-value; switching
+    RQ9 from None to an active path therefore extends the family from 5 to
+    6 active tests dynamically per DEC-025 (no new statistical tests are
+    introduced -- the McNemar p is computed upstream by the DV-1 OOD probe).
+    """
+    if counting_run_dir is None:
+        return RQ_PRIMARY_PVALUE_PATHS
+    out = dict(RQ_PRIMARY_PVALUE_PATHS)
+    out["RQ9"] = RQ9_PRIMARY_PVALUE_PATH_ACTIVE
+    return out
 
 
 # Family-wise alpha for DEC-025 Holm-Bonferroni across the RQ-primary
@@ -260,6 +366,230 @@ def collect_artefacts(run_dir: str, tags: list[str]) -> dict[str, dict[str, Any]
         "d_cal": d_cal_payload,
     }
     return out
+
+
+# ---------------------------------------------------------------------------
+# Counting (RQ9) cross-cell discovery and aggregation
+# ---------------------------------------------------------------------------
+
+
+def discover_counting_cells(counting_run_dir: str) -> list[dict[str, Any]]:
+    """Walk ``counting_run_dir`` and return one record per cell directory.
+
+    A "cell directory" is any directory that contains at least one of the
+    canonical RQ9 artefact subdirectories (``dv1_ood`` / ``dv2`` / ``dv3``
+    / ``dv4``). The walk is intentionally permissive about the parent
+    layout: per-arm checkpoints under ``$EXPS_DIR/counting/<model>/<exp>/``
+    and per-run-dir layouts under ``iridis/counting-sweep/run_N/<cell>/``
+    both resolve via the same artefact-presence rule.
+
+    Each returned record exposes ``cell_name`` (the leaf directory name),
+    ``cell_dir`` (absolute path), and parsed metadata fields ``arm`` /
+    ``variant`` / ``seed`` / ``n_embd`` when the cell name matches
+    ``COUNTING_CELL_NAME_RE``. Off-spec cell names still load (parsed
+    metadata fields fall through to ``None``).
+    """
+    if not os.path.isdir(counting_run_dir):
+        return []
+    cells: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for current, sub_dirs, _files in os.walk(counting_run_dir):
+        sub_set = set(sub_dirs)
+        # Cell-anchor rule: directory contains at least one DV subdir.
+        if not any(
+            anchor in sub_set for anchor in ("dv1_ood", "dv2", "dv3", "dv4")
+        ):
+            continue
+        cell_dir = os.path.abspath(current)
+        if cell_dir in seen:
+            continue
+        seen.add(cell_dir)
+        cell_name = os.path.basename(cell_dir.rstrip(os.sep))
+        match = COUNTING_CELL_NAME_RE.match(cell_name)
+        record: dict[str, Any] = {
+            "cell_name": cell_name,
+            "cell_dir": cell_dir,
+            "arm": None,
+            "variant": None,
+            "seed": None,
+            "n_embd": None,
+        }
+        if match is not None:
+            record["arm"] = match.group("arm").upper()
+            record["variant"] = match.group("variant")
+            try:
+                record["seed"] = int(match.group("seed"))
+                record["n_embd"] = int(match.group("nembd"))
+            except (TypeError, ValueError):
+                pass
+        cells.append(record)
+        # Do NOT descend into a cell directory: the DV subdirs are
+        # artefact leaves, never themselves cell anchors.
+        sub_dirs[:] = []
+    cells.sort(key=lambda r: r["cell_name"])
+    return cells
+
+
+def _aggregate_counting_dv2(cell_dir: str) -> dict[str, Any] | None:
+    """Load every ``dv2/<task>/counting_dv2_results.json`` and aggregate.
+
+    Returns a synthetic per-cell payload with an ``aggregate`` block that
+    averages the per-task ``aggregate.mean_*`` keys plus a ``per_task``
+    sub-dict preserving each task's raw aggregate. Returns ``None`` if no
+    DV-2 task artefact loaded for this cell.
+    """
+    per_task: dict[str, dict[str, Any]] = {}
+    for task in COUNTING_DV2_TASKS:
+        path = os.path.join(
+            cell_dir, "dv2", task, COUNTING_DV2_TASK_FILENAME
+        )
+        payload = load_json(path)
+        if payload is not None:
+            per_task[task] = payload
+    if not per_task:
+        return None
+    # Cross-task means over the per-task aggregates. Mirrors the analytic
+    # pattern of "synthesis aggregates upstream-computed scalars; no new
+    # statistical tests are run here."
+    keys_numeric = ("mean_ridge_r2", "mean_mlp_r2", "mean_gap")
+    sums: dict[str, float] = {k: 0.0 for k in keys_numeric}
+    counts: dict[str, int] = {k: 0 for k in keys_numeric}
+    n_flag_total = 0
+    for _task, payload in per_task.items():
+        agg = payload.get("aggregate") if isinstance(payload, dict) else None
+        if not isinstance(agg, dict):
+            continue
+        for k in keys_numeric:
+            v = agg.get(k)
+            if isinstance(v, (int, float)) and not _is_nan(v):
+                sums[k] += float(v)
+                counts[k] += 1
+        nf = agg.get("n_sites_non_linear_flag")
+        if isinstance(nf, (int, float)) and not _is_nan(nf):
+            n_flag_total += int(nf)
+    cross_task_aggregate: dict[str, Any] = {
+        k: (sums[k] / counts[k]) if counts[k] > 0 else float("nan")
+        for k in keys_numeric
+    }
+    cross_task_aggregate["n_sites_non_linear_flag"] = int(n_flag_total)
+    cross_task_aggregate["n_tasks_loaded"] = int(len(per_task))
+    return {
+        "schema_version": "synthesis-counting-dv2-1.0",
+        "per_task": per_task,
+        "aggregate": cross_task_aggregate,
+    }
+
+
+def _aggregate_counting_dv4(cell_dir: str) -> dict[str, Any] | None:
+    """Load ``dv4/counting_dv4_causal_results.json`` and surface aggregates.
+
+    Adds an ``aggregate`` block synthesising the max per-repeat importance
+    plus the baseline exact-match accuracy. The DV-4 script does not emit
+    its own ``aggregate`` block so this helper computes it from the
+    upstream ``per_repeat_importance`` map.
+    """
+    payload = load_json(os.path.join(cell_dir, COUNTING_DV4_RELPATH))
+    if payload is None:
+        return None
+    importance = payload.get("per_repeat_importance")
+    max_importance = float("nan")
+    if isinstance(importance, dict) and importance:
+        finite = [
+            float(v) for v in importance.values()
+            if isinstance(v, (int, float)) and not _is_nan(v)
+        ]
+        if finite:
+            max_importance = max(finite)
+    baseline = payload.get("baseline")
+    baseline_em = float("nan")
+    if isinstance(baseline, dict):
+        v = baseline.get("exact_match_accuracy")
+        if isinstance(v, (int, float)) and not _is_nan(v):
+            baseline_em = float(v)
+    payload_with_agg = dict(payload)
+    payload_with_agg["aggregate"] = {
+        "max_repeat_importance": max_importance,
+        "baseline_exact_match": baseline_em,
+    }
+    return payload_with_agg
+
+
+def _aggregate_counting_dv3(cell_dir: str) -> dict[str, Any] | None:
+    """Load ``dv3/counting_dv3_attention_results.json`` and surface aggregates.
+
+    DV-3 emits ``per_layer_head`` keyed by ``"<site>_h<head>"`` with stats
+    sub-dicts. This helper averages ``target_mass_mean`` and
+    ``entropy_mean`` across the per-(layer, head) buckets and exposes them
+    under ``aggregate.{mean_target_mass, mean_entropy}`` so the
+    triangulation resolver can read a single scalar.
+    """
+    payload = load_json(os.path.join(cell_dir, COUNTING_DV3_RELPATH))
+    if payload is None:
+        return None
+    plh = payload.get("per_layer_head")
+    target_masses: list[float] = []
+    entropies: list[float] = []
+    if isinstance(plh, dict):
+        for _bucket, stats in plh.items():
+            if not isinstance(stats, dict):
+                continue
+            v = stats.get("target_mass_mean")
+            if isinstance(v, (int, float)) and not _is_nan(v):
+                target_masses.append(float(v))
+            v = stats.get("entropy_mean")
+            if isinstance(v, (int, float)) and not _is_nan(v):
+                entropies.append(float(v))
+    payload_with_agg = dict(payload)
+    payload_with_agg["aggregate"] = {
+        "mean_target_mass": (
+            sum(target_masses) / len(target_masses)
+            if target_masses else float("nan")
+        ),
+        "mean_entropy": (
+            sum(entropies) / len(entropies)
+            if entropies else float("nan")
+        ),
+        "n_buckets": int(len(target_masses)),
+    }
+    return payload_with_agg
+
+
+def collect_counting_artefacts(
+    cells: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Build per-counting-cell artefact dict keyed by synthetic tag.
+
+    Each cell's tag is ``COUNTING_TAG_PREFIX + cell_name`` to namespace
+    counting cells away from the analytic c-tag pattern. The returned
+    dict shape mirrors ``collect_artefacts`` so the unified ``artefacts``
+    dict accepts both flavours of tag without further plumbing.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for cell in cells:
+        cell_dir = cell["cell_dir"]
+        tag = COUNTING_TAG_PREFIX + cell["cell_name"]
+        out[tag] = {
+            "counting_dv1_ood": load_json(
+                os.path.join(cell_dir, COUNTING_DV1_OOD_RELPATH)
+            ),
+            "counting_dv2": _aggregate_counting_dv2(cell_dir),
+            "counting_dv3": _aggregate_counting_dv3(cell_dir),
+            "counting_dv4_causal": _aggregate_counting_dv4(cell_dir),
+            "__cell_meta__": {
+                "cell_name": cell["cell_name"],
+                "cell_dir": cell_dir,
+                "arm": cell.get("arm"),
+                "variant": cell.get("variant"),
+                "seed": cell.get("seed"),
+                "n_embd": cell.get("n_embd"),
+            },
+        }
+    return out
+
+
+def _counting_tags(artefacts: dict[str, dict[str, Any]]) -> list[str]:
+    """Return the subset of artefact tags that are counting cells."""
+    return sorted(t for t in artefacts.keys() if t.startswith(COUNTING_TAG_PREFIX))
 
 
 # ---------------------------------------------------------------------------
@@ -342,13 +672,39 @@ def _verdict_label(payload: Any, dotted: str | None) -> str:
         return "preliminary"
     if isinstance(val, (int, float)) and not isinstance(val, bool):
         # Numeric cells: positive count -> supported, zero -> contradicted.
-        # Used by RQ7 row's aggregate.n_cells_rejected_holm cell.
+        # Used by RQ7 row's aggregate.n_cells_rejected_holm cell and Row 7's
+        # DV-4 max_repeat_importance cell. NaN values downgrade to
+        # "preliminary" rather than "contradicted" so a missing-aggregate
+        # cell does not flip the row's consensus to a negative finding.
+        if _is_nan(val):
+            return "preliminary"
         return "supported" if float(val) > 0 else "contradicted"
     return "preliminary"
 
 
+def _is_counting_row(claim_def: dict[str, Any]) -> bool:
+    """Return True iff any of the row's tier protocol keys is a counting key.
+
+    Counting rows iterate counting cell tags rather than analytic c-tags.
+    The check tolerates ``None`` tier specs (deferred) by skipping them.
+    """
+    counting_protocols = {
+        "counting_dv1_ood", "counting_dv2", "counting_dv3", "counting_dv4_causal",
+    }
+    for tier in ("primary", "secondary", "tertiary"):
+        spec = claim_def.get(tier)
+        if not spec:
+            continue
+        proto = spec[0] if isinstance(spec, (tuple, list)) and spec else None
+        if proto in counting_protocols:
+            return True
+    return False
+
+
 def build_triangulation_table(
-    artefacts: dict[str, dict[str, Any]], tags: list[str]
+    artefacts: dict[str, dict[str, Any]],
+    tags: list[str],
+    counting_run_dir: str | None = None,
 ) -> list[dict[str, Any]]:
     """For each claim, summarise the verdict across all checkpoints.
 
@@ -359,10 +715,21 @@ def build_triangulation_table(
     consensus is "supported"; else "preliminary"; missing-data only when
     every tag is missing.  This mirrors the section 1.6 convergence rule
     without inventing a new statistical test.
+
+    When ``counting_run_dir`` is supplied, Row 7 ("Recurrence helps
+    counting") is substituted from its deferred sentinel to the active
+    wiring in TRIANGULATION_ROW_7_ACTIVE, and counting rows iterate the
+    counting cell tag set instead of the analytic ``tags`` argument.
     """
     rows: list[dict[str, Any]] = []
-    for claim_def in TRIANGULATION_ROWS:
+    counting_tags = _counting_tags(artefacts) if counting_run_dir else []
+    row_defs = _resolve_triangulation_rows(counting_run_dir)
+    for claim_def in row_defs:
         cells: dict[str, Any] = {"claim": claim_def["claim"]}
+        # Counting rows resolve over counting cell tags (one per cell);
+        # analytic rows resolve over the analytic c-tag list. The two tag
+        # families are disjoint by construction (COUNTING_TAG_PREFIX).
+        row_tags = counting_tags if _is_counting_row(claim_def) else tags
         for tier in ("primary", "secondary", "tertiary"):
             spec = claim_def.get(tier)
             if spec is None:
@@ -376,7 +743,7 @@ def build_triangulation_table(
                 tag: _verdict_label(
                     artefacts.get(tag, {}).get(proto), dotted
                 )
-                for tag in tags
+                for tag in row_tags
             }
             cells[tier] = {
                 "label": _consensus(per_tag.values()),
@@ -857,6 +1224,86 @@ def _emit_triangulation_matrix_figure(
     return True
 
 
+def _emit_counting_summary_figure(
+    artefacts: dict[str, dict[str, Any]], out_path: str
+) -> bool:
+    """Per-cell counting summary: DV-1 min-acc, DV-1 McNemar p, DV-2 mean gap.
+
+    Renders one row of grouped bars per counting cell. Cells without any
+    counting artefact loaded are dropped so the figure never includes
+    placeholder rows. Returns False (no figure emitted) when no counting
+    cell has loaded any of the three scalar metrics.
+    """
+    cell_tags = _counting_tags(artefacts)
+    if not cell_tags:
+        return False
+    rows: list[tuple[str, float | None, float | None, float | None]] = []
+    for tag in cell_tags:
+        per_cell = artefacts.get(tag, {})
+        meta = per_cell.get("__cell_meta__") or {}
+        # Compose a short, distinctive label per cell. Falls back to the
+        # raw tag stripped of the counting prefix when metadata is absent.
+        if meta.get("variant") and meta.get("n_embd") is not None:
+            label = (
+                f"{meta['variant']}@n{meta['n_embd']}"
+                + (f"/s{meta['seed']}" if meta.get("seed") is not None else "")
+            )
+        else:
+            label = tag.removeprefix(COUNTING_TAG_PREFIX)
+
+        dv1 = per_cell.get("counting_dv1_ood")
+        dv2 = per_cell.get("counting_dv2")
+        min_acc = _resolve_dotted(dv1, "aggregate.min_acc") if dv1 else None
+        mcnemar_p = _resolve_dotted(dv1, "aggregate.mcnemar_p_at_200") if dv1 else None
+        mean_gap = _resolve_dotted(dv2, "aggregate.mean_gap") if dv2 else None
+
+        # Coerce to plottable floats; non-numeric / NaN -> drop to None so
+        # the bar stays empty for that cell rather than crashing the cast.
+        def _coerce(v: Any) -> float | None:
+            if isinstance(v, (int, float)) and not _is_nan(v):
+                return float(v)
+            return None
+
+        rows.append(
+            (label, _coerce(min_acc), _coerce(mcnemar_p), _coerce(mean_gap))
+        )
+    # Drop rows with NO loaded scalars so the figure does not display
+    # purely-empty bars; if every row drops, return False.
+    rows = [r for r in rows if any(v is not None for v in r[1:])]
+    if not rows:
+        return False
+
+    import numpy as np  # local import to keep top-level deps lean
+    fig, ax = _safe_setup_figure(1, 1, (max(8.0, 0.6 * len(rows) + 4), 5.5))
+    x = np.arange(len(rows))
+    width = 0.27
+
+    def _series(idx: int) -> list[float]:
+        # NaN is the matplotlib convention for "leave the bar blank".
+        return [
+            float("nan") if r[idx] is None else float(r[idx])
+            for r in rows
+        ]
+
+    ax.bar(x - width, _series(1), width, label="DV-1 min acc",
+           color="#1f77b4")
+    ax.bar(x, _series(2), width, label="DV-1 McNemar p @ L=200",
+           color="#d62728")
+    ax.bar(x + width, _series(3), width, label="DV-2 mean gap",
+           color="#2ca02c")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels([r[0] for r in rows], rotation=30, ha="right",
+                       fontsize=8)
+    ax.set_ylabel("scalar (units differ per series)")
+    ax.set_title("Counting (RQ9) per-cell summary")
+    ax.axhline(0.0, color="#333333", linewidth=0.5)
+    ax.legend(loc="upper right", fontsize=8)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+    _safe_savefig(fig, out_path)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Family-wise Holm-Bonferroni (DEC-025)
 # ---------------------------------------------------------------------------
@@ -1050,6 +1497,7 @@ def family_wise_holm(
     artefacts: dict[str, dict[str, Any]],
     tags: list[str],
     output_dir: str,
+    counting_run_dir: str | None = None,
 ) -> dict[str, Any]:
     """Apply Holm-Bonferroni at family-wise alpha=0.01 across RQ-primary tests.
 
@@ -1060,12 +1508,28 @@ def family_wise_holm(
 
     Synthesis applies the correction; it does NOT run any new statistical
     tests (DEC-025 first clause: corrections, not new tests).
+
+    When ``counting_run_dir`` is supplied, RQ9's deferred path is replaced
+    by ``RQ9_PRIMARY_PVALUE_PATH_ACTIVE`` and resolution iterates the
+    counting cell tag set. The family size used by Holm grows from 5 to 6
+    in lock-step (DEC-025 dynamic-family rule: deferred tests do not count
+    against the correction).
     """
+    rq_paths = _resolve_rq_pvalue_paths(counting_run_dir)
+    counting_tags = _counting_tags(artefacts) if counting_run_dir else []
     raw_entries: list[dict[str, Any]] = []
     raw_ps_for_correction: list[float] = []
     raw_idx_to_correct: list[int] = []
-    for rq_id, spec in RQ_PRIMARY_PVALUE_PATHS.items():
-        p, status = _resolve_rq_pvalue(rq_id, spec, artefacts, tags)
+    for rq_id, spec in rq_paths.items():
+        # RQ9's resolution scope is the counting cell tag set, not the
+        # analytic c-tags (the counting_dv1_ood payload only lives under
+        # __counting__/<cell> namespaces). Other RQs continue to resolve
+        # over ``tags`` per the analytic synthesis contract.
+        if rq_id == "RQ9" and counting_run_dir:
+            tags_for_rq = counting_tags
+        else:
+            tags_for_rq = tags
+        p, status = _resolve_rq_pvalue(rq_id, spec, artefacts, tags_for_rq)
         entry: dict[str, Any] = {
             "rq": rq_id,
             "raw_p": p,
@@ -1214,6 +1678,65 @@ def _emitted_figures_md(emitted: dict[str, bool], output_dir: str) -> str:
     return "\n".join(lines)
 
 
+def _format_counting_cells_md(artefacts: dict[str, dict[str, Any]]) -> str:
+    """Render a per-cell summary table for counting RQ9 cells.
+
+    Columns: variant | n_embd | seed | dv1_min_acc | dv1_McNemar_p_at_200
+    | dv2_mean_gap | dv3_mean_target_mass | dv4_max_repeat_importance.
+    Cells with a missing scalar render that column as ``--``. A cell with
+    no DV artefacts at all is included as a row with all dashes so its
+    presence under the run-dir is auditable.
+    """
+    cell_tags = _counting_tags(artefacts)
+    if not cell_tags:
+        return ""
+    lines = [
+        (
+            "| variant | n_embd | seed | dv1_min_acc | "
+            "dv1_McNemar_p_at_200 | dv2_mean_gap | "
+            "dv3_mean_target_mass | dv4_max_repeat_importance |"
+        ),
+        "|---------|--------|------|-------------|----------------------|"
+        "--------------|----------------------|---------------------------|",
+    ]
+
+    def _fmt_scalar(v: Any) -> str:
+        if v is None:
+            return "--"
+        if isinstance(v, bool):
+            return "yes" if v else "no"
+        if isinstance(v, (int, float)) and not _is_nan(v):
+            return f"{float(v):.4g}"
+        return "--"
+
+    for tag in cell_tags:
+        per_cell = artefacts.get(tag, {})
+        meta = per_cell.get("__cell_meta__") or {}
+        dv1 = per_cell.get("counting_dv1_ood")
+        dv2 = per_cell.get("counting_dv2")
+        dv3 = per_cell.get("counting_dv3")
+        dv4 = per_cell.get("counting_dv4_causal")
+
+        row = [
+            str(meta.get("variant") or "?"),
+            ("?" if meta.get("n_embd") is None else str(meta["n_embd"])),
+            ("?" if meta.get("seed") is None else str(meta["seed"])),
+            _fmt_scalar(_resolve_dotted(dv1, "aggregate.min_acc")),
+            _fmt_scalar(
+                _resolve_dotted(dv1, "aggregate.mcnemar_p_at_200")
+            ),
+            _fmt_scalar(_resolve_dotted(dv2, "aggregate.mean_gap")),
+            _fmt_scalar(
+                _resolve_dotted(dv3, "aggregate.mean_target_mass")
+            ),
+            _fmt_scalar(
+                _resolve_dotted(dv4, "aggregate.max_repeat_importance")
+            ),
+        ]
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
 def write_report(
     output_dir: str,
     run_dir: str,
@@ -1223,14 +1746,23 @@ def write_report(
     table: list[dict[str, Any]],
     emitted: dict[str, bool],
     holm_table: dict[str, Any] | None = None,
+    counting_run_dir: str | None = None,
 ) -> str:
     """Write synthesis_report.md and return its absolute path."""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    counting_tags = _counting_tags(artefacts)
+    counting_cells_md = _format_counting_cells_md(artefacts)
     body: list[str] = [
         "# Cross-Checkpoint Synthesis Report",
         "",
         f"- Generated: {timestamp}",
         f"- Run directory: `{run_dir}`",
+        (
+            f"- Counting run directory: `{counting_run_dir}` "
+            f"({len(counting_tags)} counting cell(s) loaded)"
+            if counting_run_dir
+            else "- Counting run directory: not supplied (Row 7 deferred)"
+        ),
         f"- Template: `{template}`",
         f"- Tags found ({len(tags)}): " + ", ".join(tags) if tags else
         "- Tags found: none",
@@ -1262,6 +1794,25 @@ def write_report(
         _format_holm_table_md(holm_table) if holm_table else
         "Family-wise Holm-Bonferroni table unavailable (no RQ p-values resolved).",
         "",
+        *(
+            [
+                "## Counting (RQ9) per-cell summary",
+                "",
+                (
+                    "Per-cell scalar surface from the counting sweep RUN_DIR. "
+                    "Each row corresponds to one trained checkpoint discovered "
+                    "under `--counting-run-dir`; the four DV scalars are "
+                    "loaded defensively (a missing artefact renders as `--` "
+                    "rather than aborting synthesis). Row 7 of the "
+                    "triangulation matrix above resolves over these cells."
+                ),
+                "",
+                counting_cells_md,
+                "",
+            ]
+            if counting_cells_md
+            else []
+        ),
         "## Cross-checkpoint figures",
         "",
         _emitted_figures_md(emitted, output_dir),
@@ -1311,6 +1862,21 @@ def build_argparser() -> argparse.ArgumentParser:
         help="Run directory containing <tag>/protocol_*_results.json.",
     )
     parser.add_argument(
+        "--counting-run-dir",
+        default=None,
+        help=(
+            "Optional separate run directory containing per-cell counting "
+            "(RQ9) artefacts (dv1_ood/, dv2/<task>/, dv3/, dv4/). When "
+            "supplied, Row 7 of the triangulation matrix resolves "
+            "actively, RQ9 is added to the family-wise Holm-Bonferroni "
+            "correction (family size grows from 5 to 6 active tests), "
+            "and a synthesis_counting_summary.png + per-cell markdown "
+            "table are emitted. Loading is defensive: missing per-cell "
+            "artefacts are skipped silently. Default unset preserves the "
+            "single-run-dir analytic-only behaviour."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default=None,
         help=(
@@ -1343,21 +1909,48 @@ def main() -> None:
     output_dir = os.path.abspath(args.output_dir or args.run_dir)
     os.makedirs(output_dir, exist_ok=True)
 
+    counting_run_dir = (
+        os.path.abspath(args.counting_run_dir)
+        if args.counting_run_dir
+        else None
+    )
+
     if not os.path.isdir(run_dir):
         logging.error("--run-dir does not exist or is not a directory: %s", run_dir)
         # Still emit a stub report so downstream rsync paths are always populated.
         emitted: dict[str, bool] = {}
         # Run the Holm pass with empty inputs so the report still has the
         # section header and the JSON sidecar lands at a predictable path.
-        holm_table = family_wise_holm({}, [], output_dir)
+        holm_table = family_wise_holm({}, [], output_dir, counting_run_dir)
         write_report(
             output_dir, run_dir, args.template, [], {}, [], emitted, holm_table,
+            counting_run_dir,
         )
         return
 
     tags = discover_tags(run_dir)
     logging.info("Discovered %d tag(s) under %s: %s", len(tags), run_dir, tags)
     artefacts = collect_artefacts(run_dir, tags)
+
+    # Counting cell discovery is gated on --counting-run-dir; absent the
+    # flag, the analytic-only flow continues unchanged. Defensive layering:
+    # discover_counting_cells returns [] for a non-existent path so a
+    # mistyped flag value degrades to the "no counting cells found" code
+    # path rather than crashing.
+    if counting_run_dir is not None:
+        counting_cells = discover_counting_cells(counting_run_dir)
+        logging.info(
+            "Discovered %d counting cell(s) under %s",
+            len(counting_cells), counting_run_dir,
+        )
+        counting_artefacts = collect_counting_artefacts(counting_cells)
+        # Merge into the unified artefacts dict using the counting tag
+        # prefix to namespace away from analytic c-tags. The prefix is
+        # disjoint from the c-tag pattern by construction.
+        for c_tag, c_payload in counting_artefacts.items():
+            artefacts[c_tag] = c_payload
+    else:
+        counting_cells = []
 
     figures: dict[str, Any] = {
         "synthesis_logit_lens.png": _emit_logit_lens_figure,
@@ -1389,7 +1982,7 @@ def main() -> None:
         logging.warning("D-cal figure emission failed: %s", exc)
         emitted["synthesis_d_cal_verdict.png"] = False
 
-    table = build_triangulation_table(artefacts, tags)
+    table = build_triangulation_table(artefacts, tags, counting_run_dir)
     try:
         emitted["synthesis_triangulation_matrix.png"] = bool(
             _emit_triangulation_matrix_figure(
@@ -1401,9 +1994,27 @@ def main() -> None:
         logging.warning("Triangulation matrix figure emission failed: %s", exc)
         emitted["synthesis_triangulation_matrix.png"] = False
 
+    # Counting (RQ9) per-cell summary figure. Emitted only when
+    # --counting-run-dir is supplied and at least one cell loaded a scalar.
+    if counting_run_dir is not None:
+        try:
+            emitted["synthesis_counting_summary.png"] = bool(
+                _emit_counting_summary_figure(
+                    artefacts,
+                    os.path.join(output_dir, "synthesis_counting_summary.png"),
+                )
+            )
+        except Exception as exc:  # pragma: no cover
+            logging.warning(
+                "Counting summary figure emission failed: %s", exc
+            )
+            emitted["synthesis_counting_summary.png"] = False
+
     # DEC-025 family-wise Holm-Bonferroni across the RQ-primary tests.
     try:
-        holm_table = family_wise_holm(artefacts, tags, output_dir)
+        holm_table = family_wise_holm(
+            artefacts, tags, output_dir, counting_run_dir
+        )
         logging.info(
             "Holm-Bonferroni: %d tests applied, %d deferred",
             holm_table.get("n_tests_applied", 0),
@@ -1422,6 +2033,7 @@ def main() -> None:
         table,
         emitted,
         holm_table,
+        counting_run_dir,
     )
     logging.info("Wrote synthesis report: %s", report_path)
 

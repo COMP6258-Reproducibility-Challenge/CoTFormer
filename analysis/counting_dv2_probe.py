@@ -130,7 +130,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--config-mode", type=str, default="raw",
                         choices=["raw", "argparse"])
     parser.add_argument("--module-path", type=str,
-                        default="transformer.h_mid",
+                        default="model.transformer.h_mid",
                         help="Dotted path to the block list to probe; "
                              "transformer.h_mid for CoTFormer (default), "
                              "transformer.h for the 4L baseline")

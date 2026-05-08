@@ -644,4 +644,73 @@ if [ "$EXIT_CODE" -eq 0 ]; then
     echo "========================================="
 fi
 
+# ========================= RQ9 DV-1 OOD ACCURACY SWEEP =====================
+#
+# Per-cell exact-match accuracy at every OOD test length in
+# {50, 75, 100, 125, 150, 175, 200} (control #6 in docs/extend-notes.md
+# §1.2 RQ9 25-control checklist; falsification rule "CoTFormer >=
+# baseline + 5pp at length 200, McNemar p < 0.01" lives at control #21).
+#
+# The driver writes a single counting_dv1_ood_results.json under
+# $CKPT_DIR/dv1_ood/, so the existing single-length artefact at
+# $CKPT_DIR/eval_summary_*.json is not clobbered. Runs only on a clean
+# training exit, mirroring the DV-2/DV-3/DV-4 gates above.
+#
+# Module-path discriminator: passed through to the shared loader but
+# not used by DV-1 itself (the driver evaluates the full model
+# end-to-end). Mirrors DV-2 / DV-3 / DV-4 so the loader signature stays
+# uniform across DVs.
+#
+# Per-cell DV-1 records the absolute accuracy curve only. The
+# baseline-vs-CoTFormer McNemar comparison is dispatched separately
+# (it requires both checkpoints to be available) via the
+# counting_dv1_ood_sweep CLI's --compare-against flag from a
+# downstream orchestrator pass that pairs Arm A baseline cells with
+# matched Arm B variant cells.
+if [ "$EXIT_CODE" -eq 0 ]; then
+    if [ "$ARM" = "A" ]; then
+        DV1_MODULE_PATH="transformer.h"
+    else
+        DV1_MODULE_PATH="transformer.h_mid"
+    fi
+    DV1_CKPT_DIR="$EXPS_DIR/counting/$MODEL/$EXP_NAME"
+    DV1_OUT_DIR="$DV1_CKPT_DIR/dv1_ood"
+    mkdir -p "$DV1_OUT_DIR"
+
+    echo ""
+    echo "========================================="
+    echo " DV-1 OOD accuracy sweep"
+    echo " Checkpoint:    $DV1_CKPT_DIR"
+    echo " Module path:   $DV1_MODULE_PATH"
+    echo " OOD lengths:   50,75,100,125,150,175,200"
+    echo " Started:       $(date)"
+    echo "========================================="
+
+    set +e
+    python -u -m analysis.counting_dv1_ood_sweep \
+        --checkpoint "$DV1_CKPT_DIR" \
+        --checkpoint-file ckpt.pt \
+        --output-dir "$DV1_OUT_DIR" \
+        --seed "$SEED" \
+        --ood-lengths "50,75,100,125,150,175,200" \
+        --n-eval 500 \
+        --batch-size 8 \
+        --sequence-length "$SEQUENCE_LENGTH" \
+        --device cuda \
+        --config-mode raw \
+        --module-path "$DV1_MODULE_PATH"
+    DV1_OVERALL_EC=$?
+    set -e
+    if [ "$DV1_OVERALL_EC" -ne 0 ]; then
+        echo "WARNING: DV-1 OOD sweep exited $DV1_OVERALL_EC" >&2
+    fi
+
+    echo ""
+    echo "========================================="
+    echo " DV-1 finished: $(date)"
+    echo " Overall DV-1 EC: $DV1_OVERALL_EC"
+    echo " Results under:  $DV1_OUT_DIR/"
+    echo "========================================="
+fi
+
 exit $EXIT_CODE

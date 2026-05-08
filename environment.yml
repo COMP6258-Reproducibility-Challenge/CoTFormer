@@ -1,7 +1,7 @@
 # Conda environment for the CoTFormer project on Iridis X.
 #
 # Pinned to match the reproduction-stream baseline (PyTorch 2.2 / CUDA 11.8)
-# plus the mechanistic-analysis sub-stream packages (scikit-learn, pingouin,
+# plus the mechanistic-analysis sub-stream packages (scikit-learn,
 # statsmodels, muon-optimizer). The resolved lockfile lives in
 # environment.lock.yml; the lockfile is rebuilt on the Iridis login
 # node by Abe prior to each HPC submission wave, not by automated
@@ -36,7 +36,6 @@ dependencies:
   # Analysis statistics (mechanistic-analysis protocols).
   - scikit-learn>=1.3
   - statsmodels>=0.14
-  - pingouin>=0.5
   # Serialisation and dataset plumbing.
   - orjson
   - tiktoken
