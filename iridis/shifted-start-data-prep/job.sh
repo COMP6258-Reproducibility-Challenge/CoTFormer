@@ -33,7 +33,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
         --error="$RUN_DIR/slurm_%j.err" \
         --mail-type=BEGIN,END,FAIL \
         --mail-user="$NOTIFY_EMAIL" \
-        --export=ALL,REPO_DIR="$REPO_DIR" \
+        --export=ALL,REPO_DIR="$REPO_DIR",RUN_DIR="$RUN_DIR" \
         "$0" "$@"
 fi
 
@@ -47,6 +47,12 @@ if [ -z "$REPO_DIR" ]; then
 fi
 
 source "$REPO_DIR/iridis/env.sh"
+
+if [ -z "$RUN_DIR" ]; then
+    RUN_DIR=$(job_output_dir)
+fi
+mkdir -p "$RUN_DIR"
+exec > >(tee -a "$RUN_DIR/output.log") 2> >(tee -a "$RUN_DIR/error.log" >&2)
 
 module load conda
 eval "$(conda shell.bash hook)"
@@ -65,6 +71,7 @@ echo " CPUs:     $SLURM_CPUS_PER_TASK"
 echo " Job ID:   $SLURM_JOB_ID"
 echo " Task:     $TASK"
 echo " Data dir: $DATA_DIR/rasp_primitives/$TASK"
+echo " Run dir:  $RUN_DIR"
 echo " Started:  $(date)"
 echo "========================================="
 
