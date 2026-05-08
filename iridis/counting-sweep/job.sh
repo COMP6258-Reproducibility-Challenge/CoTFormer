@@ -456,4 +456,73 @@ echo "   scripts/rq9_launch_arm_b.sh   (Arm B)"
 echo " --use_pretrained auto will pick up from the latest ckpt_N.pt."
 echo "========================================="
 
+# ========================= DV-2 PAIRED-PROBE EVALUATION ====================
+#
+# Per-(cell, task) linear-probe + MLP-probe sweep over the trained checkpoint
+# of this cell. Runs only on a clean training exit so we never probe a
+# truncated checkpoint. The probe writes counting_dv2_results.json (+ .png)
+# under $CKPT_DIR/dv2/<task>/ -- the bash script does NOT mirror the probe's
+# internal artefact paths (per the path-construction discipline at the top
+# of this file).
+#
+# Module-path discriminator: Arm A baseline is the 4L standard transformer
+# (but_full_depth, no mid block) so we probe transformer.h. All Arm B
+# variants (V1-V4) are CoTFormer variants whose recurrent mid block is the
+# representational locus of interest, so we probe transformer.h_mid.
+if [ "$EXIT_CODE" -eq 0 ]; then
+    if [ "$ARM" = "A" ]; then
+        DV2_MODULE_PATH="transformer.h"
+    else
+        DV2_MODULE_PATH="transformer.h_mid"
+    fi
+    DV2_CKPT_DIR="$EXPS_DIR/counting/$MODEL/$EXP_NAME"
+
+    echo ""
+    echo "========================================="
+    echo " DV-2 paired-probe evaluation"
+    echo " Checkpoint:    $DV2_CKPT_DIR"
+    echo " Module path:   $DV2_MODULE_PATH"
+    echo " Started:       $(date)"
+    echo "========================================="
+
+    DV2_OVERALL_EC=0
+    for DV2_TASK in task1 task2 task3; do
+        DV2_OUT_DIR="$DV2_CKPT_DIR/dv2/$DV2_TASK"
+        mkdir -p "$DV2_OUT_DIR"
+
+        echo ""
+        echo "--- DV-2 task=$DV2_TASK ---"
+        python -u -m analysis.counting_dv2_probe \
+            --checkpoint "$DV2_CKPT_DIR" \
+            --checkpoint-file ckpt.pt \
+            --output-dir "$DV2_OUT_DIR" \
+            --seed "$SEED" \
+            --task "$DV2_TASK" \
+            --eval-length 200 \
+            --n-samples 500 \
+            --batch-size 4 \
+            --sequence-length "$SEQUENCE_LENGTH" \
+            --device cuda \
+            --config-mode raw \
+            --module-path "$DV2_MODULE_PATH" \
+            --train-fraction 0.8 \
+            --mlp-epochs 200 \
+            --mlp-lr 1e-3 \
+            --ridge-alpha 1.0 \
+            --selectivity-threshold 0.05
+        DV2_TASK_EC=$?
+        if [ "$DV2_TASK_EC" -ne 0 ]; then
+            echo "WARNING: DV-2 task=$DV2_TASK exited $DV2_TASK_EC" >&2
+            DV2_OVERALL_EC=$DV2_TASK_EC
+        fi
+    done
+
+    echo ""
+    echo "========================================="
+    echo " DV-2 finished: $(date)"
+    echo " Overall DV-2 EC: $DV2_OVERALL_EC"
+    echo " Results under:  $DV2_CKPT_DIR/dv2/{task1,task2,task3}/"
+    echo "========================================="
+fi
+
 exit $EXIT_CODE

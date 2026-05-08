@@ -12,30 +12,7 @@
 
 ## Scope
 
-**This file IS**:
-
-- Engineering specifications for the `analysis/` package and the counting
-  substream training/eval pipelines.
-- Config-flag plumbing and six-blocker resolution notes
-  ([§3](#3-blocker-resolution-notes)).
-- Environment freeze records (conda, pip, lockfile) and HPC cluster
-  deployment recipes ([§4](#4-environment-and-hpc-deployment)).
-- Branch discipline and worktree protocol for the experimentation stream
-  ([§5](#5-branch-discipline)).
-- Testing protocol: smoke tests, inter-batch CV, calibration gates
-  ([§6](#6-testing-protocol)).
-- Debugging artefacts and orch directive index
-  ([§7](#7-debugging-and-orch-directive-index)).
-
-**This file IS NOT**:
-
-- A research report or a scientific framing document. Hypotheses, H0
-  statements, falsification criteria, and triangulation matrices live
-  in `docs/extend-notes.md`.
-- A reproduction-divergence log. Paper-vs-ours numerical deltas live
-  in `docs/reprod-notes.md`.
-- A plan or a decision log. Plans live in `docs/extend-notes.md` §1.8;
-  decisions live in `docs/extend-notes.md` §1.9.
+> **Scope**: engineering substrate for the `analysis/` package, BLOCKER resolutions, environment + HPC, branch protocol, and analysis-protocol implementation consequences. Scientific framing in `extend-notes.md`; reproduction divergences in `reprod-notes.md`.
 
 ## Table of Contents
 
@@ -45,16 +22,11 @@
 - [4. Environment and HPC deployment](#4-environment-and-hpc-deployment)
 - [5. Branch discipline](#5-branch-discipline)
 - [6. Testing protocol](#6-testing-protocol)
-- [7. Debugging and orch directive index](#7-debugging-and-orch-directive-index)
 - [8. Analysis engineering consequences](#8-analysis-engineering-consequences)
 
 ---
 
 ## 1. Cross-reference index
-
-Every section in this file corresponds to one or more sections in
-`docs/extend-notes.md`. The cross-reference index below is the
-authoritative mapping; future edits must preserve it.
 
 | Technical section (this file) | Scientific section (extend-notes.md) | Relationship |
 |---|---|---|
@@ -63,13 +35,7 @@ authoritative mapping; future edits must preserve it.
 | §4 Environment and HPC deployment | §1.7 HPC packages, §1.8 Compute Budget | §4 records the conda env, SLURM configs, and scratch layout; §1.7/§1.8 specify the compute requirement |
 | §5 Branch discipline | §1.7 Branch strategy | §5 codifies the abeprobes-specific workflow; §1.7 codifies the main-vs-tak strategy decided earlier |
 | §6 Testing protocol | §1.6 Reliability Discipline, §1.3 Protocol D-calibration validation ladder | §6 records the smoke-test and gate-check procedures; §1.6/§1.3 specify the scientific content |
-| §7 Orch directive index | §1.8 Sequencing, §1.9 Decision Log | §7 records which orch completed which wave; §1.8/§1.9 specify the plan and decisions |
 | §8 Analysis engineering consequences | §1.3 Protocol B / C / D implementation notes, §1.4 Prediction 1 + Prediction 2, §1.8 Compute Budget | §8 records the Wave-2 / Wave-2c engineering consequences surfaced during protocol implementation; §1.3 / §1.4 / §1.8 specify the scientific constraint each engineering note serves. §8.6 (attention-taxonomy flash fallback) + §8.7 (router-analysis ADM-only execution) cover the Protocol C and Protocol D engineering consequences respectively. |
-
-Every cross-reference is bidirectional: a `docs/extend-notes.md`
-anchor cited here must cite back to this file from the corresponding
-section. The bidirectional audit is part of every doc orch's closing
-checklist.
 
 ---
 
@@ -101,6 +67,9 @@ analysis/
 ├── kv_rank.py                 # Protocol G -- KV compressibility (architectural-extension stream MLA design)
 ├── interpolation_validity.py  # Protocol H -- RQ7 clone-set entropy
 ├── depth_emb_freeze.py        # Protocol I -- RQ8 8-condition freeze ablation
+├── counting_anova_rq9b.py     # RQ9b -- two-way ANOVA on architecture × ln_mid interaction
+├── counting_dv3_attention.py  # RQ9 DV-3 -- penultimate-repeat attention pattern analysis
+├── counting_dv4_causal.py     # RQ9 DV-4 -- causal zero-ablation per repeat
 ├── synthesis.py               # Cross-checkpoint plotting
 └── calibration/
     ├── __init__.py
@@ -181,9 +150,9 @@ implementation path, test expectation, and any non-obvious consequences.
 ### 3.2 BLOCKER 2 -- `--tie_word_embeddings` flag
 
 - **Extend-notes anchor**: §1.2 RQ9 point 2.
-- **Files touched**: `config/base.py`, `models/but_full_depth.py:216`
+- **Files touched**: `config/base.py`, `models/but_full_depth.py::GPTBase.__init__`
   (the hardcoded `wte.weight = lm_head.weight`),
-  `models/but_full_depth.py:get_parameter_group_specs` (the hardcoded
+  `models/but_full_depth.py::GPTBase.get_parameter_group_specs` (the hardcoded
   `decay.remove('lm_head.weight')`).
 - **Default**: `True` (preserves existing behaviour).
 - **Counting 4L baseline**: `--tie_word_embeddings False` matches Chang
@@ -199,7 +168,7 @@ implementation path, test expectation, and any non-obvious consequences.
 ### 3.3 BLOCKER 3 -- `--scale_attn_by_inverse_layer_idx` flag
 
 - **Extend-notes anchor**: §1.2 RQ9 point 3.
-- **Files touched**: `config/base.py`, `models/but_full_depth.py:Block.__init__`
+- **Files touched**: `config/base.py`, `models/but_full_depth.py::Block.__init__`
   (thread `layer_idx` argument), `CausalSelfAttention.forward`
   (apply scale via SDPA `scale` kwarg when flash disabled, or
   pre-multiply `q` when flash enabled).
@@ -327,6 +296,8 @@ implementation path, test expectation, and any non-obvious consequences.
   bit-identical to pre-change -- the Flash fast path is preserved
   and no additive bias is constructed.
 
+**Cross-variant closure (DEC-035 (a))**: the same three-level (`GPTBase.forward` → `Block.forward` → `CausalSelfAttention.forward`) plumbing has been applied to `models/cotformer_full_depth.py`, `models/cotformer_full_depth_lnmid_depthemb.py`, and `models/adaptive_cotformer_mod_efficient_sigmoid_crw_lnmid_de_random_factor_single_final.py`. The ADM variant additionally tracks `active_attention_mask` alongside `active_indices` through the MoD token-drop chain; it raises `NotImplementedError` on heterogeneous-active-length routing (`T_k` not a multiple of `T_q`) rather than silently mis-masking. The pad-key bias is tiled across the cross-repeat K cache via the `reps_so_far = T_k // T_q` factor (identity under the V4 routing-disabled `min_repeat = n_repeat = 4` configuration).
+
 ---
 
 ## 4. Environment and HPC deployment
@@ -381,12 +352,12 @@ precedent.
 /scratch/$USER/analysis_workspace/
 ├── cotres_40k/
 │   ├── meta.json
-│   ├── residual_h_begin.npy
-│   ├── residual_h_mid_r<R>_l<L>.npy
-│   ├── residual_ln_mid_r<R>.npy
-│   ├── kv_h_mid_l<L>.npy           # repeat-averaged (Protocol G weight consumer)
-│   ├── kv_h_mid_r<R>_l<L>.npy      # per-repeat (Protocol G activation consumer)
-│   └── attn_weights_h_mid_l<L>.npy # only when ATTN_WEIGHTS site requested
+│   ├── residual_mid_l<L>_r<R>.npy       # per-repeat residual at h_mid layer L
+│   ├── residual_ln_mid_r<R>.npy         # per-repeat residual after ln_mid
+│   ├── residual_pre_ln_f.npy            # final pre-ln_f residual (one per forward)
+│   ├── kv_mid_l<L>_r<R>.npy             # fused [Q, K, V] output of c_attn at layer L, repeat R
+│   ├── attn_weights_mid_l<L>_r<R>.npy   # post-softmax per-head causal attention dist (only when non_flash=True)
+│   └── router_mod<K>.npy                # per-router logits (ADM only)
 ├── lncot_40k/
 ├── lncot_60k/
 ├── adm_v2_40k/
@@ -413,8 +384,7 @@ Current HPC packages:
 |---|---|---|
 | `iridis/analyze-lncot+adm/job-gpu.sh` | GPU protocols (A, C, D, D-cal, G-activation, H, I) | 1 GPU, 8h walltime |
 | `iridis/analyze-lncot+adm/job-cpu.sh` | CPU protocols + Tuned Lens training + D-cal analysis | 0 GPU, 8h walltime |
-| `iridis/counting-train/job.sh` | Pilot 1 + main sweep training | 2 GPUs, 24h walltime, chainable via auto-resume |
-| `iridis/counting-eval/job.sh` | RQ9 + RQ9b OOD evaluation + DV-3 + DV-4 | 1 GPU, 12h walltime |
+| `iridis/counting-sweep/job.sh` | Pilot 1 (Arm A) + main sweep (Arm B/C) training + RQ9 + RQ9b OOD evaluation + DV-3 + DV-4 | 2 GPUs, 24h walltime, chainable via auto-resume; eval phase reuses checkpoints in-place |
 
 ---
 
@@ -434,29 +404,9 @@ Two persistent branches govern the project's codebase:
   (`data/counting.py`, `iridis/counting-*`), and architectural
   extension scaffolding (MLA, mcHC) live here. Branches off `main`.
 
-The two branches are deliberately separated so that anyone reading the
-paper-reproduction code on `main` is not confused by in-progress
-experimental work, and vice versa.
-
 ### 5.2 Agent constraints
 
-All agents work EXCLUSIVELY on `abeprobes`. Verification is a mandatory
-first step for every orch directive:
-
-```bash
-git -C /home/totob/projects/comp6258/CoTFormer branch --show-current
-# Expected output: abeprobes
-# If any other branch, ABORT and escalate.
-```
-
-Agents do NOT:
-- Commit (`git commit`) or push (`git push`). Abe commits manually.
-- Switch branches (`git checkout`, `git switch`) without explicit
-  instruction in the directive.
-- Create new branches (`git checkout -b`, `git switch -c`) without
-  explicit instruction.
-- Merge branches (`git merge`) without explicit instruction.
-- Cherry-pick from `main` without explicit instruction.
+> **Agent operating rule**: agents work exclusively on `abeprobes`; no commits, branch switches, merges, or cherry-picks without an explicit directive. Verification is mandatory: `git -C <repo> branch --show-current` must print `abeprobes` before any edit.
 
 ### 5.3 Cherry-pick protocol (if ever needed)
 
@@ -487,6 +437,56 @@ git worktree add /tmp/claude/cotformer-main-edit main
 
 This preserves the `abeprobes` working state and avoids accidental
 commits on `main` from an agent context.
+
+### 5.5 Tak-branch ports (DEC-009)
+
+The five DDP infrastructure fixes that `main` carries (Gloo `cpu_group`, Gloo gather, atomic `/tmp`+`shutil.copy2` save, `broadcast_buffers=False`, `NCCL_PROTO=Simple`) are absent on `origin/tak-ablation-code`. Rather than switching branches and forward-porting these fixes, the analysis develops on `abeprobes` (off `main`) and selectively ports tak's algorithmic contributions as Python modules into the `analysis/` package.
+
+**Specific ports**:
+
+| Source (tak branch) | Target | What |
+|---------------------|--------|------|
+| `models/depthemb_eval_metrics.py:540-554` | `analysis/logit_lens.py` | JSD projection via `lm_head(ln_f(h_r))` |
+| `models/depthemb_eval_metrics.py:374-512` | `analysis/common/collector.py` | Replaced by forward-hook collector |
+| `models/fixed_cot_attn.py:152-172` | `analysis/attention_taxonomy.py` | Flash/causal switch (monkey-patch) |
+| `models/fixed_cot_attn.py:383-426` | `analysis/attention_taxonomy.py` | Reshape pipeline + 7 attention metrics |
+
+### 5.6 SHA pinning header convention (DEC-026 T11)
+
+Each ported file's top-of-file header must record the source SHA
+and line range so that the upstream-vs-port relationship survives
+both branch evolution and refactoring. The header pattern is:
+
+```
+# Ported from origin/tak-ablation-code@<7-char-SHA> :: <relative path on tak's branch> L<start>-L<end>
+# Ported on <YYYY-MM-DD> by <author handle>
+# Original-author rationale: <one-line summary; cite tak's commit message if present>
+```
+
+The `<7-char-SHA>` is the abbreviated `git rev-parse --short=7
+HEAD` of the tak branch at the moment of porting, captured at
+port time and frozen — subsequent updates to the tak branch do
+not invalidate the header. If a port is later updated to a newer
+SHA, the entire header is replaced (not appended to), and the
+git history records the SHA bump. The convention is enforced by
+a Phase 0 lint check (`scripts/check_port_headers.py`) that
+greps the `analysis/` package for files containing `tak-` and
+verifies the header pattern; missing or malformed headers fail
+the check.
+
+### 5.7 Explicitly NOT ported
+
+- `distributed/ddp.py` 30-to-60 min timeout (tak flagged as TODO in
+  commit `9a833b2`).
+- `optim/base.py` `eval_steps = 24` hardcode (regression vs main's
+  conditional).
+- `optim/base.py` `get_raw_model` eval wrap (duplicate of main's B9
+  chain).
+- `models/__init__.py` `flash_train_caus_eval` import (broken -- file
+  does not exist on tak's branch).
+- `optim/modifed_base.py` (orphan with 0 importers, typo in
+  filename).
+- `models/tak_custom_cot.py` (superseded by `fixed_cot_attn.py`).
 
 ---
 
@@ -544,31 +544,6 @@ and Bisk [25] at `n_embd=1024`. Two hard gates apply:
 
 ---
 
-## 7. Debugging and orch directive index
-
-### 7.1 Orch directive index
-
-Each orch that touches the abeprobes branch records its completion in
-the index below. The index is append-only; entries are never removed.
-
-| Orch | Directive | Status | Completed on | Summary |
-|---|---|---|---|---|
-| o-cotformer-skel-1 | DIR-001 | DONE (uncommitted) | 2026-04-22 | Phase 1 skeleton + 6 BLOCKERs + environment + pre-registration freeze |
-| o-cotformer-mvp-a | DIR-001 | COMPLETE (uncommitted) | 2026-04-22 | Phase 2a common/ infrastructure + Protocols A, A-ext, E + HPC packaging |
-| o-cotformer-mvp-b | DIR-001 | COMPLETE (uncommitted) | 2026-04-22 | Phase 2b Protocols B (debiased CKA), F (effective dim), G (KV rank + KV-CoRE NER) + HPC script extensions; analyze_kv_compression.py monolith removed |
-| Phase-2D meta-direct + 5 w-refactorers | -- | COMPLETE (uncommitted) | 2026-04-28 | 23-fix hostile-review pass: Type II SS via statsmodels + bootstrap CI on η²_AB (DEC-028); cosine subsidiary local-centring (Protocol B); verdict triple-gate composition with direction-aware Spearman + fit-error guard + raw-vs-sink-corrected gate1 split (Protocol C); FP32 lens path with deepcopy + n_tokens guard + epoch-shuffled sampler (Protocol A / A-ext); per-layer monotonicity n_measured denominator (Protocol A); cosine-IO boundary-cell NaN + JSON-safe NaN→None (Protocol E); DV-4 ablation hook registration order; VERSIONS array `_build_versions()` deferred to post-`source env.sh`; `_workspace_has_kv` DRY refactor; `discover_workspace_sites` SoT helper (Items 4 + 8). All 13 Python parses + 3 bash syntaxes + 3 built-in smoke tests + 8 custom unit tests pass; 0 firewall hits. |
-
-### 7.2 Debugging log
-
-Debugging artefacts that are worth preserving across sessions (beyond
-what git history captures) are recorded below. Each entry carries:
-(a) the symptom observed, (b) the root cause, (c) the fix applied,
-(d) the audit trail (commit hash or file change).
-
-*(no entries yet)*
-
----
-
 ## 8. Analysis engineering consequences
 
 Engineering-side notes surfaced during the Wave-2 analysis-protocol
@@ -604,23 +579,9 @@ Compute-cost accounting for a single C3 checkpoint:
 
 Implementation strategy:
 
-- Gram matrices ``K_tilde = X X^T`` (diagonal zeroed) are
-  pre-computed once per site before the pair loop. Memory cost is
-  105 x 32 MB = ~3.3 GB at ``float64``, well within the 64 GB
-  SBATCH allocation.
-- ``HSIC_u(Y, Y)`` is permutation-invariant because the trace,
-  row-sum dot product, and total-sum terms are all unchanged when
-  Y's row/column indices are permuted by the same permutation
-  (``P K_tilde_Y P^T`` has the same trace as ``K_tilde_Y``, and
-  ``1^T P K_tilde_Y P^T 1 = 1^T K_tilde_Y 1``). Only
-  ``HSIC_u(X, Y_perm)`` varies across null samples; the CKA
-  denominator is therefore precomputed once per pair, saving two
-  thirds of the in-loop cost.
-- Permutation is implemented as a two-axis fancy index
-  ``K_tilde_Y[p[:, None], p[None, :]]`` rather than regenerating
-  the Gram matrix from a permuted data matrix. The former is
-  ~``n_tokens^2`` memory traffic per draw; the latter would be
-  ``n_tokens^2 * n_embd`` per draw (400x more work).
+- Gram matrices `K_tilde = X X^T` (diagonal zeroed) precomputed once per site (~3.3 GB float64 across 105 sites).
+- `HSIC_u(Y, Y)` is permutation-invariant; the CKA denominator is precomputed once per pair, saving ~2/3 of in-loop cost.
+- Permutation via two-axis fancy index `K_tilde_Y[p[:, None], p[None, :]]` is ~`n_tokens^2` memory traffic per draw vs `n_tokens^2 * n_embd` for full-data permutation (~400× cost reduction).
 
 Escalation path: if profiling on the target node shows > 30 h CPU
 per checkpoint the compute budget is blown up (§1.8 subtotal is
@@ -699,14 +660,7 @@ written on those tags; Protocol D short-circuits with a
 ``not_applicable`` verdict; see
 [§8.7](#87-router-analysis-adm-only-execution).
 
-The key-naming is produced deterministically by the collector's
-``_make_site_hook`` via
-``key.replace('[', '_l').replace(']', '')`` on the site key
-produced by `enumerate_sites`. The §4.3 workspace-layout diagram
-in this document was written against an earlier stub convention
-(``residual_h_mid_r<R>_l<L>.npy``) and does not match the
-collector's live output; treat the actual collector key format
-as canonical until a future doc-wave resolves the text.
+The §4.3 workspace-layout diagram and this file-naming table use the same canonical names (collector key format).
 
 ### 8.4 Spectral module dependency chain
 
@@ -736,21 +690,7 @@ cache the collector produces; they do NOT install their own
 forward hooks, monkey-patch ``CausalSelfAttention``, or materialise
 activations via a bespoke forward pass.
 
-Rationale:
-
-- **DRY**: one hook-management contract, one per-repeat counter,
-  one CPU-resident-float32 capture convention, one workspace
-  file-naming scheme. Protocol scripts need only know the
-  workspace file-naming table (§8.3).
-- **Reproducibility**: all captures share the same ``torch.no_grad``
-  envelope, the same ``type_ctx`` autocast, the same
-  ``_flatten_bt`` convention. A second capture path would drift
-  from these guarantees and contaminate cross-protocol
-  triangulation rows in §1.6.
-- **Test surface**: a single collector is testable against
-  ``sites_per_forward_count``; bespoke capture paths fragment the
-  test surface and make per-repeat bookkeeping bugs
-  protocol-specific rather than reproducible via smoke tests.
+**Rationale**: one hook contract, one per-repeat counter, one CPU-resident-float32 capture convention, one workspace file-naming scheme; bespoke capture paths fragment the test surface and contaminate cross-protocol triangulation.
 
 **Exceptions** are only permissible when an EVIDENT computational
 constraint makes combining captures infeasible (e.g. the Protocol
@@ -762,10 +702,6 @@ A CV-gate accounting in §8.2). Every exception must:
    hooks), and
 3. check the workspace for existing outputs before triggering a
    re-capture (idempotency).
-
-Future protocol scripts that wish to derogate from this rule must
-raise the exception via the same mechanism and document it here;
-silent one-off capture paths are a defect even when they work.
 
 ### 8.6 Attention-taxonomy flash fallback
 
@@ -786,14 +722,14 @@ capture and enforces two coupled toggles on the run:
    ``CausalSelfAttention`` module in ``transformer.h_begin``,
    ``h_mid``, ``h_end``, and ``h``. This routes the
    ``CausalSelfAttention.forward`` math path at
-   ``models/base.py:85-119`` to the non-flash branch.
+   ``models/base.py::CausalSelfAttention.forward`` to the non-flash branch.
 
 Checkpoint interaction: ``CausalSelfAttention.__init__`` only
 registers the ``bias`` causal-mask buffer in its non-flash branch
-(``models/base.py:52-62``); checkpoints trained under PyTorch 2.0+
+(``models/base.py::CausalSelfAttention.__init__``); checkpoints trained under PyTorch 2.0+
 (i.e. every checkpoint in the Analysis Matrix) have ``flash=True``
 at init and carry no ``bias`` buffer. The non-flash forward path at
-``models/base.py:94`` uses ``self.bias[:, :, :T, :T]``; without a
+``models/base.py::CausalSelfAttention.forward`` uses ``self.bias[:, :, :T, :T]``; without a
 buffer this crashes with AttributeError when the collector later
 flips ``flash=False``. `_apply_non_flash` detects the missing
 buffer and installs a causal mask on the fly via plain-attribute
@@ -814,7 +750,7 @@ projected output) and not ``(y, att)``, a standard
    residual stream; downstream modules remain unaffected).
 2. Re-runs the Q/K math path on the same input to recompute
    ``att`` post-softmax. The re-computation mirrors the
-   ``models/base.py:92-99`` math, intentionally omitting the
+   ``models/base.py::CausalSelfAttention.forward`` math, intentionally omitting the
    attention-dropout and cache-prefix branches because the
    collector runs in ``torch.no_grad() + model.eval()`` where
    ``attn_dropout`` is an identity and ``cache_context`` is None.
@@ -830,14 +766,7 @@ manager exit. Users who invoke ``register_hooks`` / ``remove_hooks``
 manually must pair the calls inside a ``try / finally`` so a
 mid-run crash cannot leave the model in a modified state.
 
-Compute cost: the non-flash math path is roughly 4x the flash-
-kernel per-block cost; the monkey-patch's Q/K re-computation adds
-another 2x on top. Combined, Protocol C forwards run at ~8x the
-flash-backend baseline. ``docs/extend-notes.md`` §1.3 Protocol C
-compute row quotes ~9 min on L4 per checkpoint at
-``max_tokens = 2048``, ``seq_length = 256``; this matches the ~8x
-multiplier over the ~1 min flash-backend forward on the same
-budget.
+**Compute cost**: non-flash math + Q/K re-computation runs Protocol C forwards at ~8× the flash-backend baseline; ~9 min per checkpoint at `max_tokens = 2048`, `seq_length = 256` matches the §1.8 compute budget.
 
 This is the second pre-approved derogation of the collector-only
 principle ([§8.5](#85-collector-only-principle)) -- the first is
@@ -897,16 +826,7 @@ flag in the ``cross_version`` sub-block records the verdict. C5
 v2 against C4 v1 at matched 60k steps is the primary comparison
 in the Analysis Matrix.
 
-Why Protocol D lives on the CPU stage (job-cpu.sh): the forward
-pass on a 24L x 5 model at ``max_tokens = 2048, seq_length = 256``
-takes ~5 min on a 16-core CPU, an acceptable cost relative to
-the Tuned Lens ~5 h CPU budget per checkpoint that dominates the
-CPU stage. Running Protocol D on the GPU would compete with
-Protocol C's ~9 min GPU slot per checkpoint and the Protocol G
-Type B ~25 min per checkpoint; the CPU placement keeps the GPU
-job tighter and still honours the §1.8 compute budget's "~10 min
-GPU" row (Protocol D's per-checkpoint budget is accepted as CPU-
-resident without loss of scientific fidelity).
+**CPU placement rationale**: ~5 min on a 16-core CPU (24L × 5 forward at `max_tokens = 2048, seq_length = 256`); avoids contention with Protocol C's GPU slot and Protocol G Type B's ~25 min, while honouring the §1.8 "~10 min GPU" Protocol D budget.
 
 ### 8.8 Counter-registration order in collector + DV-4 ablation
 

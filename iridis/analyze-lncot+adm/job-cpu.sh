@@ -10,7 +10,9 @@
 ################################################################################
 # analyze-lncot+adm CPU stage -- Protocol A-ext (Tuned Lens) + Protocol E
 # (Residual Diagnostics) + Protocol B (CKA) + Protocol F (Eff. Dim) +
-# Protocol G weight-level (Type A) + Protocol D (Router Analysis) + synthesis stub.
+# Protocol G weight-level (Type A) + Protocol D (Router Analysis) +
+# Protocol D-calibration 4-gate aggregation. Synthesis is local-only
+# (run `make synthesis` from the repo root after rsync'ing run_N/).
 #
 # Wave 1 + 2b + 2c deliverable (MVP observational bundle).
 # Depends on job-gpu.sh having produced the per-tag workspace on /scratch
@@ -109,6 +111,14 @@ KV_TARGET_RANK=192
 MAX_TOKENS=2048
 SEQ_LENGTH=256
 BATCH_SIZE=8
+
+# Protocol D-calibration (RQ5) aggregation: consumes the Tier 1 + Tier 2
+# metrics.csv produced GPU-side and runs the Spearman gate + linear-
+# classifier fit + 4-gate verdict per docs/extend-notes.md §1.3 D-cal
+# verdict table. The per-tier output dirs live under <gpu-run-N>/d_cal/;
+# we resolve the most recent sibling run_N when this CPU job's own
+# $RUN_DIR is empty (mirrors the convention used for logit_lens_results.json).
+DCAL_N_PER_CONDITION=1000
 
 # ========================= END CONFIGURATION ================================
 
@@ -325,7 +335,7 @@ for version_entry in "${VERSIONS[@]}"; do
     fi
 
     # --- Protocol D: Router policy analysis (ADM C4/C5 only; else short-circuits) ---
-    # Per DIR-001 T3 and §1.3 Protocol D row: runs on every checkpoint;
+    # Per docs/extend-notes.md §1.3 Protocol D row: runs on every checkpoint;
     # short-circuits with verdict=not_applicable on C1/C2/C3 (no
     # transformer.mod router stack). Capture stage runs a forward pass
     # with the ROUTER_LOGITS site on --device cpu; the analysis stage
@@ -357,13 +367,74 @@ for version_entry in "${VERSIONS[@]}"; do
 
 done  # end VERSION LOOP
 
-# ========================= SYNTHESIS STUB ===================================
+# ========================= PROTOCOL D-CALIBRATION AGGREGATION ================
+# 4-gate verdict (Spearman + classifier + Tier 1 / Tier 2 triangulation +
+# baseline accuracy) consuming the Tier 1 + Tier 2 metrics.csv emitted
+# by job-gpu.sh. Per the protocol docstring the verdict logic decides
+# whether DV-2 (paired probe) is canonical or replaced by the
+# TOP-K-MASS fallback; the AMBIGUOUS path triggers a 4000-per-condition
+# retry (manual, not wired here).
+#
+# The GPU stage writes to <gpu-RUN_DIR>/d_cal/tier{1,2}/. Since this CPU
+# job has its own RUN_DIR, we resolve the GPU-side d_cal/ via the most
+# recent sibling run_N convention (same approach the per-tag stages use
+# for logit_lens_results.json above).
 echo ""
-echo "--- Stage 5 Synthesis (stub; Wave 2 deliverable) ---"
-echo "  Cross-checkpoint synthesis lives in analysis/synthesis.py and will"
-echo "  be activated when every Wave-2 protocol body has landed. For now"
-echo "  per-checkpoint JSON and PNG artefacts in run_N/<tag>/ are the"
-echo "  primary artefact; see README.md for the consumption guide."
+echo "###################################################################"
+echo "   Protocol D-calibration: 4-gate verdict aggregation"
+echo "###################################################################"
+
+# Locate the most recent GPU-side d_cal/ dir. First try our own RUN_DIR
+# (in case a future scheduler co-locates GPU and CPU outputs). Then walk
+# sibling run_*/ in reverse order picking the first that has tier1/ + tier2/.
+DCAL_GPU_RUN=""
+if [ -d "$RUN_DIR/d_cal/tier1" ] && [ -d "$RUN_DIR/d_cal/tier2" ]; then
+    DCAL_GPU_RUN="$RUN_DIR/d_cal"
+else
+    # Most recent first: ls -t orders by mtime descending.
+    for candidate in $(ls -1dt "$PACKAGE_DIR"/run_*/d_cal 2>/dev/null); do
+        if [ -d "$candidate/tier1" ] && [ -d "$candidate/tier2" ]; then
+            DCAL_GPU_RUN="$candidate"
+            break
+        fi
+    done
+fi
+
+if [ -z "$DCAL_GPU_RUN" ]; then
+    echo "  WARNING: no sibling run_N/d_cal/ with tier1/ + tier2/ found; skipping"
+    echo "  D-cal aggregation. Submit job-gpu.sh first to populate the per-tier"
+    echo "  metrics.csv that this stage consumes."
+else
+    echo "  Tier inputs: $DCAL_GPU_RUN/{tier1,tier2}/"
+    # Aggregation reads sibling tier{1,2}/metrics.csv from the same parent
+    # dir as --out, then writes spearman + classifier + verdict + figure
+    # into <out>/aggregate/. --analysis-only is the contract surface named
+    # by the upstream directive (the module body is Phase-2 deferred and
+    # will fail-fast with NotImplementedError until then). Only documented
+    # flags from the protocol docstring are used (--ckpt and --tier are
+    # forward-pass-only and intentionally omitted in the analysis-only path).
+    python -m analysis.calibration.entropy_calibration \
+        --analysis-only \
+        --n-per-condition "$DCAL_N_PER_CONDITION" \
+        --seed "$SEED" \
+        --out "$DCAL_GPU_RUN"
+
+    echo "  Protocol D-cal aggregation outputs:"
+    echo "    $DCAL_GPU_RUN/aggregate/spearman.json"
+    echo "    $DCAL_GPU_RUN/aggregate/classifier.json"
+    echo "    $DCAL_GPU_RUN/aggregate/verdict.json"
+    echo "    $DCAL_GPU_RUN/aggregate/figure.png"
+fi
+
+# ========================= SYNTHESIS (LOCAL; NOT IN HPC) =====================
+# analysis.synthesis is pure cross-checkpoint plotting + scalar aggregation
+# (no GPU, no model forward, no SVD). It is wired as a top-level Makefile
+# target rather than an HPC stage; rsync run_N/<tag>/ artefacts back from
+# Iridis and run `make synthesis` locally. See the project root Makefile.
+echo ""
+echo "--- Stage 5 Synthesis (LOCAL; see top-level Makefile) ---"
+echo "  Synthesis is local-friendly per analysis/synthesis.py; rsync the"
+echo "  run_N/<tag>/ outputs back from Iridis and run \`make synthesis\`."
 
 # ========================= SUMMARY ==========================================
 echo ""

@@ -42,12 +42,6 @@
 | 2 | Unpick and Analyse | Understand what iterative computation computes | Active |
 | 3 | Extend | Improve architecture informed by analysis findings | Blocked on the analysis |
 
-The streams are sequential: each informs the next. The mechanistic-analysis
-stream is self-contained -- understanding is the goal, not a stepping
-stone to engineering. The fact that we use analysis insights to design
-extensions is a consequence of the scientific method, not the purpose
-of the analysis.
-
 The analysis has two sub-streams:
 
 - **Analysis main** (analytic): 10 protocols plus synthesis on frozen C1-C5
@@ -78,19 +72,11 @@ KV measurement programme proposed here. See
 [§1.9 novel contributions](#novel-contributions-confirmed-narrow-reframings)
 for the per-claim novelty audit.
 
-Every experiment in the analysis must satisfy:
-1. **Specificity**: name the model, checkpoint, layer range, data
-   split, and evaluation mode.
-2. **Variable isolation**: one independent variable per experiment.
-3. **Falsifiability**: state what would disprove the hypothesis.
-4. **Ontological purpose**: what truth do we learn, independent of
-   engineering utility?
-5. **Confounder control**: explicitly list and mitigate confounders.
+Each RQ states: H0, falsification criterion, IV/DV, confounders.
 
 ### Reliability Discipline
 
-The lecturer cautioned that interpretability tools may not give
-"meaningful or reliable" results. Three practices address this:
+> **note**: Lecturer raised concern that interpretability tools may not give "meaningful or reliable" results; addressed by the three practices below.
 
 1. **Triangulation rule**: every interpretive claim must be supported
    by at least two independent measurements. "Independent" means
@@ -109,70 +95,23 @@ The lecturer cautioned that interpretability tools may not give
    specified in
    [RQ1](#rq1-prediction-convergence-across-repeats-sq1).
 
-The triangulation rule is stated here once and binds every row of
-the [§1.6](#16-reliability-discipline-and-triangulation)
-cross-validation matrix. Each row is audited for operational
-independence: a row whose primary and secondary measurements share
-the same forward pass and the same derived statistic counts as a
-single measurement, and the claim is downgraded to
-"single-measurement preliminary" with the downgrade documented in
-the synthesis output rather than left implicit. This audit is
-explicit, not aspirational; the [§1.6](#16-reliability-discipline-and-triangulation)
-matrix shows the result of the audit row by row, with downgrades
-flagged.
-
-### Ontological Cleanliness
-
-Every research question answers the lecturer's "what is the question"
-challenge before any code is written. The answer must be expressible
-as: "the truth we seek is X; our measurement is reliable to extent Y;
-the finding would be falsified by Z." Research questions that cannot
-satisfy this template are not ready for implementation.
-
 ### Scope Discipline
 
 The analysis operates under a **2-week elapsed ceiling** from Abe's
 approval to the analysis deliverable. Whatever protocols produce triangulated results by
-the ceiling are reported; the remainder go to "future work". This
-addresses the lecturer's concern that the analysis "could become an
-entire project in its own right."
+the ceiling are reported; the remainder go to "future work".
+
+> **note**: Lecturer cautioned the analysis "could become an entire project in its own right"; addressed by the 2-week ceiling and scope-shedding triggers below.
 
 ##### Scope-shedding pre-registered order
 
-A scope-shedding hybrid progress-and-time trigger, pre-registered
-before any HPC submission, governs which protocols are sacrificed if
-the ceiling is at risk. Three triggers fire in order of precedence:
+Three triggers, pre-registered before HPC submission, fire in precedence order if the ceiling is at risk:
 
-1. **Pilot 1 validation fail at approximately day 3 of the schedule**
-   (see [§1.8 sequencing](#18-compute-budget-and-sequencing) for the
-   schedule): if the
-   [RQ9](#rq9-recurrent-inductive-bias-for-algorithmic-counting)
-   Pilot 1 does not reproduce Chang and Bisk [25] within the
-   per-OOD-length pass band documented in
-   [§B13](../docs/reprod-notes.md#b13-pilot-1-cb-exact-results-stub) of
-   `docs/reprod-notes.md`, the entire RQ9 sub-stream is shed to the extension.
-   The analytic sub-stream (RQ1-RQ8) continues unchanged.
-2. **Calibration inconclusive at approximately day 5**: if the
-   Protocol D-calibration four-gate validation ladder (see
-   [§1.3 Protocol D-calibration](#protocol-d-calibration-rq5-dv-2-attention-entropy-validation))
-   produces an AMBIGUOUS verdict on both Tier 1 (GPT-2-large) and
-   Tier 2 (ADM C5), DV-2 is flagged single-measurement-preliminary
-   and the
-   [RQ5](#rq5-context-preservation-under-adaptive-depth-sq4)
-   "Contextual isolation" claim downgrades to DV-1 + DV-3 only.
-3. **Day-10 progress review under 60 % of protocols complete**: shed
-   in fixed order [RQ8](#rq8-depth-embedding-freeze-ablation-sq1)
-   first, then [RQ5](#rq5-context-preservation-under-adaptive-depth-sq4),
-   then RQ9 (if not already shed by trigger 1). This order minimises
-   the loss of cross-RQ triangulation: RQ8 is single-RQ, RQ5 has DV-1
-   triangulation backup, RQ9 has standalone publication value but
-   does not feed the mechanistic synthesis.
+1. **Pilot 1 validation fail (~day 3)**: if [RQ9](#rq9-recurrent-inductive-bias-for-algorithmic-counting) Pilot 1 does not reproduce Chang and Bisk [25] within the [§B13](../docs/reprod-notes.md#b13-pilot-1-cb-exact-results-stub) pass band, the entire RQ9 sub-stream sheds to the extension; RQ1-RQ8 continue.
+2. **Calibration inconclusive (~day 5)**: if [Protocol D-calibration](#protocol-d-calibration-rq5-dv-2-attention-entropy-validation) returns AMBIGUOUS on both Tier 1 and Tier 2, DV-2 is flagged single-measurement-preliminary and [RQ5](#rq5-context-preservation-under-adaptive-depth-sq4) downgrades to DV-1 + DV-3.
+3. **Day-10 progress review under 60% complete**: shed in fixed order — [RQ8](#rq8-depth-embedding-freeze-ablation-sq1), then [RQ5](#rq5-context-preservation-under-adaptive-depth-sq4), then RQ9 (if not already shed).
 
-Triggers are checked at the day-3, day-5, and day-10 review
-checkpoints; the human-in-the-loop reviewer (Abe) authorises the
-shed and the rationale enters the [§1.9](#19-decision-log)
-decision log as a dated DEC-NNN entry. Shedding is one-way
-within the analysis; shed protocols re-enter scope only post-analysis.
+Shedding is one-way within the analysis.
 
 ### Pre-registration venue
 
@@ -246,23 +185,7 @@ distinct aspect of the model's internal dynamics:
 
 ##### SQ5 deferral to the extension
 
-SQ5 is decomposed here for ontological completeness but
-operationalised in [§2.3 Causal Cross-Repeat Mask for ADM](#23-causal-cross-repeat-mask-for-adm)
-in the extension, where the proposed mask redesign is treated as an
-extension-stream ablation alongside MLA and mcHC. The decomposition
-stays in the analysis so that the
-[§1.6](#16-reliability-discipline-and-triangulation)
-matrix can reference the SQ5 question text when the analysis attention
-analyses ([RQ3](#rq3-attention-head-specialisation-sq2),
-[Protocol C](#13-experimental-protocols)) report cross-repeat
-attention-mass distributions. A descriptive analysis of the current
-ADM mask's attention-mass allocation (per `(layer, repeat,
-position)`) is included in Protocol C as a secondary output, with
-~30 min eval compute beyond the protocol's primary RQ3 budget; this
-descriptive output supplies an empirical baseline for the extension
-mask redesign without committing analysis compute to a counterfactual
-mask ablation. The H0/falsification statements for SQ5-as-experiment
-appear in [§2.3](#23-causal-cross-repeat-mask-for-adm), not here.
+SQ5 is decomposed here for ontological completeness but operationalised as Extension §2.3. Protocol C reports a descriptive baseline of the current ADM mask's attention-mass allocation as a secondary output (~30 min extra eval compute) without committing analysis compute to a counterfactual mask ablation.
 
 ### 1.2 Research Questions
 
@@ -322,9 +245,7 @@ Logit Lens and Tuned Lens [24] agree on the convergence trajectory?
 
 Agreement thresholds (from the operational specification):
 
-- **Agree** if: Spearman rho between per-repeat top-1 accuracy
-  sequences >= 0.80 AND sign agreement on all consecutive-repeat KL
-  pairs AND cross-lens KL <= 0.5 nats averaged over sites.
+- **Agree** if: Spearman rho >= 0.80 (Belrose 2023 [24] empirical agreement floor between unweighted and translator lenses on standard transformers; we adopt as the binding cross-lens-agreement threshold for the LN-CoTFormer) AND sign agreement on all consecutive-repeat KL pairs AND cross-lens KL <= 0.5 nats averaged over sites.
 - **Disagree** if: Spearman rho < 0.60 OR sign disagreement on >= 2
   consecutive pairs OR cross-lens KL > 1.0 nats OR top-1
   disagreement rate > 30 %.
@@ -437,15 +358,7 @@ convergence claim (degraded triangulation, explicitly flagged).
 
 ##### Inter-batch robustness
 
-All activation-based analyses (Protocols A through I, except
-Protocol I which is a counterfactual intervention) run on **4
-independent validation batches** (4 consecutive non-overlapping
-batches from OWT2 val starting at token offset 0, each of length
-2048; total 8192 tokens; fixed seed for reproducibility).
-Inter-batch coefficient of variation is reported for every metric.
-If CV < 5 % across batches for a given metric, the single-batch
-point estimate is validated. Compute overhead: ~4x on the
-forward-pass-dependent protocols (~2.4 h to ~4.5 h GPU).
+Per [§1.6](#16-reliability-discipline-and-triangulation) reliability discipline, RQ1 runs on 4 independent OWT2 validation batches with inter-batch CV reported per metric.
 
 #### RQ2: Representation Structural Similarity (SQ1)
 
@@ -551,24 +464,11 @@ and late (layers 17-21) mid-layers?
 
 ##### Zheng taxonomy gap
 
-Zheng et al.'s taxonomy [7] assumes each head has a fixed layer
-position and a fixed functional role. In our weight-tied model, the
-SAME physical head appears at 5 "virtual layers" (repeats 1-5). A
-head that functions as a Positional Head in repeat 1 may function as
-an Induction Head in repeat 3 because input representations evolve
-across repeats. This is genuinely novel territory -- no existing
-taxonomy covers functional-role variation across repeats within the
-same physical head.
+Zheng et al.'s taxonomy [7] fixes head function by layer; weight-tying makes the same physical head occupy 5 virtual layers, so functional role may vary across repeats — uncharted by any existing taxonomy.
 
 ##### Cross-repeat attention sinks
 
-Xiao et al. [26] document attention sinks (disproportionate attention
-mass on early tokens) in standard transformers. Our cross-repeat KV
-cache creates novel sink opportunities: the first repeat's KV entries
-are visible to all later repeats, potentially receiving
-disproportionate attention from repeats 3-5. Protocol C explicitly
-measures per-position attention mass aggregated across repeats to
-detect such cross-repeat sinks.
+Cross-repeat KV creates novel sink opportunities (Xiao et al. [26]): repeat-1 KV entries are visible to all later repeats and may receive disproportionate mass; Protocol C measures per-position attention mass aggregated across repeats to detect this.
 
 #### RQ4: Router Validity (SQ3)
 
@@ -646,12 +546,7 @@ survived deep, compared to when most context halted at repeat 1-2?
     [Protocol D-calibration](#protocol-d-calibration-rq5-dv-2-attention-entropy-validation)
     fourth-gate threshold), DV-2 is flagged
     single-measurement-preliminary and the contextual-isolation
-    claim is downgraded accordingly. Where calibration is REFUTED
-    on both Tier 1 and Tier 2, the
-    REPLACE-WITH-TOP-K-MASS fallback substitutes DV-2 with the
-    fraction of attention mass at repeat 5 landing on
-    same-or-deeper-survived context tokens (see
-    [Protocol D-calibration](#protocol-d-calibration-rq5-dv-2-attention-entropy-validation)).
+    claim is downgraded accordingly. On calibration FAIL, the top-k-mass fallback applies (see [Protocol D-calibration](#protocol-d-calibration-rq5-dv-2-attention-entropy-validation)).
 - **DV-3** (representation-derived; new triangulation partner per
   [DEC-026](#19-decision-log) responding to the pre-Phase-1
   hostile review's operational-independence concern): cosine
@@ -714,24 +609,7 @@ survived deep, compared to when most context halted at repeat 1-2?
   classifier-accuracy gate, the claim is reported under DV-1 + DV-3
   triangulation only, with DV-2 explicitly downgraded.
 
-**Novelty**: Raposo et al. [48] (Mixture-of-Depths) and Bae et al.
-[47] (Mixture-of-Recursions) introduce per-token dynamic depth
-allocation but neither reports an information-propagation
-measurement of the kind targeted here -- both papers focus on
-performance and routing-quality metrics. Jain et al. (Mixture of
-Nested Experts) extends MoD to vision tokens with similarly
-performance-focused reporting. The cross-repeat KV-cache contextual
-isolation question is therefore genuinely novel within the
-adaptive-depth and mixture-of-recursions literature, with no
-existing baselines or predictions to calibrate against. The
-calibration substrate proposed in
-[Protocol D-calibration](#protocol-d-calibration-rq5-dv-2-attention-entropy-validation)
-fills the methodological gap by anchoring DV-2 against an
-induction-head ground truth on architectures where the mapping
-from attention entropy to information localisation can be checked
-empirically; the
-[contextual-isolation triangulation row](#16-reliability-discipline-and-triangulation)
-is updated to reflect the three operationally independent DVs.
+**Novelty**: no prior MoD/MoR work measures information-propagation under cross-repeat KV; closest comparators do not address contextual isolation under adaptive depth.
 
 #### RQ6: Effective Dimensionality (SQ1)
 
@@ -771,12 +649,6 @@ is updated to reflect the three operationally independent DVs.
   operate in lower-dimensional subspaces; if d_eff is flat or
   increasing, the recurrent architecture preserves or expands
   representational dimensionality despite identical weights.
-  - *Consequences for the extension*: a positive d_eff-decrease finding
-    directly informs the MLA rank allocation (DEC-EXT-001 in
-    [§2.1](#21-multi-head-latent-attention-mla)); a flat or
-    expanding d_eff trajectory suggests uniform or per-repeat
-    rank allocation in MLA. The extension consequence is downstream of
-    the truth-seeking question, not the motivation for it.
 
 ##### Rogue dimensions and three-way cross-validation
 
@@ -862,14 +734,6 @@ attention entropy on polluted positions?
   these two mechanical regimes operates is itself the
   contribution; it determines whether ADM's failure mode (when
   it fails) is router miscalibration or interpolation pollution.
-  - *Consequences for the extension*: a positive pollution finding feeds
-    the extension mcHC design decision (router replacement vs router
-    complement; see [§2.2](#22-manifold-constrained-hyperconnections-mchc)).
-    Independently, a positive finding offers a mechanistic
-    explanation for the 0.64 PPL gap reported in Section 5 of [3]
-    that is distinct from the gradient-starvation hypothesis.
-    The extension design consequence and the paper-numbers explanation
-    are downstream of the truth-seeking question.
 - **Priority**: HIGH -- feeds the extension mcHC design decision (router
   replacement vs complement).
 - **Relation to [RQ4](#rq4-router-validity-sq3)**: orthogonal. RQ4
@@ -921,15 +785,8 @@ the per-repeat logit-lens distribution deviate from its natural state?
   residual (mitigation: dual measurement without `ln_mid`);
   counterfactual probe limitations (mitigation: state findings as
   "the model's LEARNED use of `depth_emb` at inference").
-- **H0**: Freezing has less than 0.01 PPL impact per repeat AND
-  less than 1 % drop in per-repeat top-1 accuracy across all 8
-  conditions.
-- **Falsification**: Frozen-to-0 or zero-vector causes more than
-  0.05 PPL degradation at repeats 3-5 OR random condition causes
-  non-monotonic accuracy fluctuations OR zero-vector PPL diverges
-  from frozen-to-0 PPL by more than 0.05 (which would isolate the
-  signal carried by the *trained* depth-0 vector beyond the
-  no-signal ablation reference).
+- **H0**: Freezing has no measurable PPL or top-1-accuracy impact across all 8 conditions.
+- **Falsification**: zero/freeze ablation produces a measurable PPL increase at repeats 3-5 vs the unfrozen control (paired t-test p < 0.01, with Holm-Bonferroni correction over the 8-condition family).
 - **Ontological purpose**: the truth sought is whether the learned
   `depth_emb` lookup encodes meaningful "repeat identity" that the
   model exploits at inference, or whether the embedding has been
@@ -941,12 +798,6 @@ the per-repeat logit-lens distribution deviate from its natural state?
   as a no-op (no condition produces a delta). All three are
   experimentally distinguishable with this IV and form the
   ontological output.
-  - *Consequences for the extension*: a positive (a) finding informs
-    DEC-EXT-002 (MLA RoPE branch dimensioning in
-    [§2.1](#21-multi-head-latent-attention-mla)); a (c) finding
-    suggests the embedding can be removed without behavioural
-    cost. The extension consequence is downstream of which of (a)/(b)/(c)
-    the experiment selects.
 - **Priority**: MEDIUM.
 
 #### RQ9: Recurrent Inductive Bias for Algorithmic Counting
@@ -982,31 +833,6 @@ architectures, fewer seeds per cell).
 | Main sweep (CoTFormer-native, breadth-over-depth; initial wave at `n_embd=1024`) | Four CoTFormer variants at `n_embd=1024` (initial wave) with widths `{128, 256, 512}` as budget-contingent secondary expansion: (V1) `cotformer_full_depth` without reserved layers (`n_layer_begin=0, n_layer_end=0`, no `ln_mid`, no `depth_emb`); (V2) `cotformer_full_depth` with reserved layers (CoT+Reserved, `n_layer_begin=2, n_layer_end=1`, no `ln_mid`, **7 effective layers per [DEC-033](#19-decision-log) Option (c)**); (V3) `cotformer_full_depth_lnmid_depthemb` (LN-CoTFormer, with `ln_mid` and `depth_emb`); (V4) `adaptive_cotformer_mod_efficient_sigmoid_crw_lnmid_de_random_factor_single_final` (ADM, with `ln_mid`, `depth_emb`, and Mixture-of-Repeats router with `min_repeat=n_repeat=4` for comparability with non-adaptive variants). | CoTFormer-native regime applies to all four variants: GELU, `tie_word_embeddings=True` (the CoTFormer architecture's hardcoded tying), `scale_attn_by_inverse_layer_idx=False`, `max_grad_norm=1.0`, cosine schedule with `warmup=3000`, AdamW (`wd=0.1`, `beta2=0.95`), decay grouping, `n_head=4`, `bf16`/FP32, `enable_flash=True` where supported. **Training budget: 312.5K steps at BS=32 per cell** (matching Chang and Bisk [25]'s step count; step-matched not sample-matched). | **Initial wave: 3 seeds per architecture at `n_embd=1024`** = 12 cells (4 variants x 3 seeds). Secondary expansion to widths `{128, 256, 512}` at reduced per-cell seed count is contingent on the initial-wave results and remaining budget (per [DEC-033](#19-decision-log)). | Initial wave: 12 cells x ~24-36 L4-hours per cell = ~288-432 L4-hours = ~6-9 L4-days on 2x L4; secondary-width expansion adds ~24-96 L4-hours at reduced seed count. |
 | Arm C (C&B-adapted CoTFormers, CONTINGENT) | Same four CoTFormer variants (V1-V4) at the width(s) where Arm B shows interesting divergences from expected recurrence behaviour. | Arm-B architectures with **C&B-adapted training regime** injected: ReLU activation, `max_grad_norm=0.3`, `scale_attn_by_inverse_layer_idx` (using CoTFormer-specific semantics; see `docs/extend-technical.md` §3.3). All other hyperparameters remain CoTFormer-native. | Contingent on Arm B results; seed count TBD at the point of triggering. | TBD at the point of triggering. |
 
-**Why the three-arm design** (updated per [DEC-033](#19-decision-log)):
-Pilot 1 (Arm A) establishes that our codebase can reproduce [25]'s
-published 4L-at-1024 result *under their training regime*; it is the
-only strict-reproduction control in RQ9. If Pilot 1 fails, we cannot
-trust any cross-architecture comparison the main sweep produces and
-the entire RQ9 sub-stream sheds (per the
-[scope-shedding pre-registered order](#scope-shedding-pre-registered-order)
-trigger 1). If Pilot 1 passes, the main sweep (Arm B) tests four
-CoTFormer variants under the CoTFormer-native regime: the four
-variants cover the architectural spectrum from vanilla
-weight-tied recurrence (V1) through reserved-layer recurrence (V2),
-through normalised recurrence (V3), to router-gated recurrence (V4),
-answering "does each architectural increment change the inductive
-bias for counting?". Arm C (contingent) runs the same four variants
-with Chang-and-Bisk-adapted hyperparameters (ReLU, `max_grad_norm=0.3`,
-and the CoTFormer-specific `scale_attn_by_inverse_layer_idx`) ONLY
-if Arm B shows divergences from expected recurrence behaviour that
-cannot be attributed to architectural effects alone; Arm C isolates
-whether any unexpected finding is an architectural or training-regime
-effect. The distinction between reproduction-fidelity (Arm A) and
-fair-comparison (Arms B and C) regimes is a named methodology
-subsection in `docs/reprod-notes.md` §M6 (Reproduction-fidelity vs
-fair-comparison regime distinction); see that subsection for the
-discipline that governs how the two regimes are reported.
-
 ##### Depth-matching and the reserved-layer variant
 
 The four CoTFormer variants V1-V4 differ in effective depth at
@@ -1019,26 +845,7 @@ The four CoTFormer variants V1-V4 differ in effective depth at
 | V3 (LN-CoTFormer, no reserved for depth-match) | 0 | 0 | 4 | Yes |
 | V4 (ADM, no reserved for depth-match) | 0 | 0 | 4 | Yes |
 
-V2's canonical paper configuration (2 begin + 1 end) produces 7
-effective layers at 1L-4R, which is **not depth-matched to the 4L
-standard**. Three disposition options were considered for V2's
-depth-match handling; per [DEC-033](#19-decision-log)
-(Abe 2026-04-22), **Option (c) is adopted**:
-
-- Option (a) -- run V2 at 7 effective layers against a separate 7L
-  standard transformer (rejected: doubles the standard-side cost
-  for a secondary comparison);
-- Option (b) -- run V2 at 4 effective = 1L-4R + (0, 0) reserved
-  (rejected: degenerates V2 into V1 and loses the reserved-layer
-  manipulation);
-- **Option (c)** (ADOPTED) -- run V2 at its paper-canonical 1L-4R
-  with (n_layer_begin = 2, n_layer_end = 1) = 7 effective layers,
-  compare against the 4L standard only, acknowledge the asymmetry
-  as a **secondary finding about reserved layers plus recurrence
-  jointly** rather than a pure architecture-vs-standard comparison.
-  The V1 vs V2 within-CoTFormer contrast ISOLATES the reserved-layer
-  effect at matched n_repeat; this within-family contrast is not
-  affected by the V2-vs-standard depth asymmetry.
+V2 runs at its paper-canonical 7 effective layers and is compared against the 4L standard with the depth asymmetry reported as a secondary finding ([DEC-033](#19-decision-log) Option (c)).
 
 **Pilot 1 RNG seed protocol**: Pilot 1 uses Chang and Bisk [25]'s
 `[1234, 12]`-style seed convention extended to 5 seeds for
@@ -1157,11 +964,6 @@ all other IVs fixed:
 | OOD generalisation | n\_embd=256, CoT+Res, Task 1 | 7 test lengths | Fragility profile |
 | Task generality | n\_embd=256, CoT+Res, length=200 | 3 tasks | Robustness check |
 
-The architecture x width interaction is the main experiment. The
-full matrix is reported but the dedicated sub-analyses isolate each
-IV per the variable-isolation principle. n\_embd=256 uses 5 seeds
-(matching Chang and Bisk); other widths use 3.
-
 ##### Xu and Sato 2025 framing (formal prior)
 
 Per [DEC-024](#19-decision-log) (S2 resolution), RQ9 is
@@ -1177,29 +979,6 @@ trivially mirror. Theorem 1 provides the formal prediction; our
 RQ9 design measures whether the gap is empirically narrowed,
 preserved, or widened in the CoTFormer architecture's specific
 weight-tied recurrent setting.
-
-Merrill and Sabharwal [17] established the foundational TC^0
-expressivity baseline for transformers and proved that horizontal
-CoT expands the complexity class from TC^0 to NC^1 with O(n)
-decoding steps, with the proviso that the proof requires
-generating intermediate tokens that serve as external memory; we
-cite Merrill and Sabharwal [17] as the upstream complexity-class
-result that motivated Xu and Sato's [29] subsequent comparison
-analysis, but the framing of RQ9 as a *test of a published
-formal claim* rests on Xu and Sato [29] Theorem 1 rather than on
-the Merrill and Sabharwal [17] complexity bound directly.
-
-Both the 1L-4R CoTFormer and the 4L standard Transformer are
-O(1)-depth architectures and both belong to the same complexity
-class under uniform analysis. The question RQ9 answers is
-empirical: "does the practical benefit Xu and Sato [29] predict
-under approximate-counting conditions transfer to the CoTFormer's
-weight-tied recurrent setting?" A positive RQ9 result (CoTFormer
-beats the 4L baseline at OOD lengths) corroborates Xu and Sato's
-[29] approximate-counting prediction; a negative result either
-falsifies the prediction at the architectural scales we tested or
-identifies a confound (training data, optimisation, attention
-implementation) that the original analysis did not control.
 
 ##### Width sweep design (DEC-012)
 
@@ -1333,7 +1112,7 @@ Contiguous integers from a random offset, not randomised.
 | Gradient clipping | max\_norm = 0.3 | 1.0 | 1.0 |
 | `scale_attn_by_inverse_layer_idx` | True | False | False |
 | Linear layer | Conv1D (transposed) | nn.Linear | nn.Linear |
-| `tie_word_embeddings` | False | True (GPT-2) | True (hardcoded in `but_full_depth.py:216`; requires code change for the 4L baseline) |
+| `tie_word_embeddings` | False | True (GPT-2) | True (hardcoded in `but_full_depth.py::GPTBase.__init__`; requires code change for the 4L baseline) |
 | Dropout | 0.0 | 0.1 | 0.0 |
 
 Our counting models adopt the Chang and Bisk configuration (ReLU,
@@ -1345,85 +1124,12 @@ weight matrix) and does not affect model behaviour.
 
 **Code changes required** (Phase 1 skeleton orch deliverables):
 
-1. **`--activation` flag** (`config/base.py`): choices `gelu`,
-   `relu`. Parameterise `MLP.__init__` in all model files (currently
-   hardcoded `nn.GELU()`). Default: `gelu` (preserves existing
-   behaviour); counting jobs pass `--activation relu`.
-2. **`--tie_word_embeddings` flag** (`config/base.py`): default
-   `True` (preserves existing behaviour). When `False`, skip the
-   `wte.weight = lm_head.weight` assignment AND the corresponding
-   `decay.remove('lm_head.weight')` in `get_parameter_group_specs`.
-   Counting 4L baseline passes `--tie_word_embeddings False`.
-3. **`--scale_attn_by_inverse_layer_idx` flag** (`config/base.py`):
-   default `False`. When `True`, `CausalSelfAttention` divides
-   attention logits by `(layer_idx + 1)` before softmax. Requires
-   threading `layer_idx` through `Block.__init__`. Per
-   [DEC-020](#19-decision-log) (the seven-divergence
-   reconciliation), this flag is enabled **only in Pilot 1**
-   (Chang and Bisk-exact regime) and disabled in the main sweep.
-   The SDPA integration uses PyTorch >= 2.1's `scale` keyword
-   argument (`F.scaled_dot_product_attention(q, k, v, scale=1/sqrt(d_k)/(layer_idx+1))`)
-   when Flash is disabled, or pre-multiplies `q` by
-   `1/(layer_idx + 1)` before the SDPA call when Flash is
-   enabled (Flash does not accept a `scale` argument).
-4. **`data/counting.py` module + dispatcher refactor**: a
-   five-file change touching the dataloader, config, dataset
-   dispatcher, training-loop branch, and main entrypoint:
-   - `data/counting.py` (new): a `CountingDataset` class providing
-     the `__getitem__` and `__len__` protocol expected by the
-     existing `optim/base.py` training loop. Generators support
-     `(start, length)` sampling, the `[start_int, "a"*L]` input
-     format, and the `["-1", start+1, ...]` output format
-     documented above. Constructor seeds the per-rank RNG via the
-     project's `seed_list` convention; the val/ood splits use
-     disjoint seeds per the existing `data/utils.py` pattern.
-   - `config/base.py:43`: add `"counting"` to the `--dataset`
-     choice list so command-line parsing accepts the new dataset
-     name.
-   - `data/utils.py:7-9`: extend the `PREPARE_GET_DATASET_MAP`
-     dispatcher with `"counting": data.counting.prepare_counting_dataset`
-     so the train-loop's loader-resolution finds the new module.
-   - `optim/base.py`: branch the training loop on
-     `args.dataset == "counting"` to skip the OWT2-specific data
-     handling (numpy memmap of token IDs) and consume the
-     counting dataset's tensor-dict output directly. Also add
-     control-row 3 (cumulative-product-of-counts as control-task
-     selectivity baseline) at the loss-computation step:
-     compute the per-position cross-entropy on a label-side mask
-     that excludes the start token but includes the running-count
-     positions, addressing the original directive's "control-row
-     3 label-side masking" gap.
-   - `main.py`: add `--scheduler constant_with_warmup` to the
-     `--scheduler` choice list, exposing the constant-with-warmup
-     option that Chang and Bisk [25]'s `trainer.py:72` actually
-     uses (their paper prose said `cosine` but the code does
-     not use it; see `docs/reprod-notes.md` §B12).
-5. **Shifted PE support** (BLOCKER 5 expansion): the existing
-   RoPE encoder accepts `start_index` (an integer offset). To
-   thread per-sample random offsets through the 4L baseline:
-   - `but_full_depth.CausalSelfAttention.forward:88` accepts an
-     `indices` keyword argument and forwards it to
-     `apply_rotary_emb_torch` (or the `RoPE.adapt_keys/queries`
-     path).
-   - `but_full_depth.Block.forward:175` propagates the `indices`
-     keyword argument through the block's residual flow.
-   - `GPTBase.forward` adds a `position_ids=None` keyword
-     argument; when provided, it overrides the model's default
-     `arange(seq_len)` position generation and threads through to
-     each block's `forward`.
-6. **Pad-mask-aware attention** (BLOCKER 6): the counting data
-   has variable-length sequences padded to the per-batch maximum.
-   The model's attention path must mask out padded positions so
-   that (a) padded positions do not contribute to the attention
-   computation for valid positions, and (b) the loss at padded
-   positions is excluded. Add a per-sample `attention_mask` tensor
-   (shape `[B, L]`, 1 for valid, 0 for pad) threaded through the
-   block forward; use the mask to construct the SDPA additive
-   bias `-1e9 * (1 - attention_mask)` for padded keys; use the
-   mask to scatter the cross-entropy loss only over valid
-   positions. Without BLOCKER 6, the model's attention learns
-   from pad tokens during training and the per-batch loss is
-   biased by padding mass.
+1. **BLOCKER 1 — `--activation` flag**: parameterise the MLP activation so counting jobs can use ReLU instead of GELU. Required to match Chang and Bisk [25] codebase (`inductive_counting_with_LMs/scripts/causal_transformer/config.py:27`). Implementation: extend-technical.md §3.1.
+2. **BLOCKER 2 — `--tie_word_embeddings` flag**: parameterise the hardcoded `wte.weight = lm_head.weight` tie. Required because the Chang and Bisk 4L baseline trains without weight tying, whereas CoTFormer hardcodes the tie. Implementation: extend-technical.md §3.2.
+3. **BLOCKER 3 — `--scale_attn_by_inverse_layer_idx` flag**: parameterise per-layer attention-logit rescaling, enabled only in Pilot 1 to match Chang and Bisk's exact regime per [DEC-020](#19-decision-log). The flag is disabled for the main sweep because the `layer_idx` semantics are ambiguous on weight-tied recurrent blocks. Implementation: extend-technical.md §3.3.
+4. **BLOCKER 4 — `data/counting.py` module + dispatcher refactor**: introduce the synthetic counting dataset and wire it through the existing training loop. Required because the project's data pipeline is OWT2-specific (numpy memmap), and the counting task needs a separate dataset class plus a `constant_with_warmup` scheduler option to match Chang and Bisk's `trainer.py:72`. Implementation: extend-technical.md §3.4.
+5. **BLOCKER 5 — `indices` threading for shifted PEs**: thread per-sample random position offsets through every block's forward path so the OOD-position robustness regime (DEC-012c) actually reaches the rotary embedding. Required because the existing `Block.forward` declared `indices=None` but never forwarded it to `self.attn`. Implementation: extend-technical.md §3.5.
+6. **BLOCKER 6 — Pad-mask-aware attention**: thread a per-sample `attention_mask` through the block forward so variable-length counting batches do not (a) leak attention onto padded keys or (b) bias the per-batch loss with padding mass. Required because the counting task uses variable-length sequences whereas OWT2 uses fixed-length contiguous chunks. Implementation: extend-technical.md §3.6.
 
 **Compute update**: the main sweep retains the 36-run baseline
 matrix (4 widths x 3 architectures x 3 seeds at small widths),
@@ -1437,67 +1143,17 @@ within the first half-day of the schedule.
 
 ##### RQ9b — `ln_mid` effect on counting (pre-registered interaction test)
 
-Per [DEC-028](#19-decision-log) (S7 resolution), RQ9b
-explicitly pre-registers the architecture x `ln_mid` interaction
-test as its own falsifiable claim, alongside the RQ9 main-effect
-architecture comparison. The CoT+Reserved variant (no `ln_mid`)
-and the LN-CoTFormer variant (with `ln_mid`) are both trained at
-all four widths in the main sweep, so the data needed for RQ9b
-is generated at no extra training cost; only the analysis is new.
+Per [DEC-028](#19-decision-log) (S7 resolution), RQ9b pre-registers the architecture x `ln_mid` interaction as its own falsifiable claim alongside the main-effect architecture comparison. CoT+Reserved (no `ln_mid`) and LN-CoTFormer (with `ln_mid`) are trained at all four widths in the main sweep, so RQ9b reuses that data — only the analysis is new.
 
-- **IV-1**: Architecture in {4L standard Transformer, 1L-4R
-  CoT+Reserved, 1L-4R LN-CoTFormer} (the main-sweep architecture
-  IV).
-- **IV-2**: `ln_mid` presence in {absent (CoT+Reserved), present
-  (LN-CoTFormer)} (a binary IV; the 4L baseline is excluded from
-  the 2x2 factorial because it has no `ln_mid` analogue. The
-  RQ9b factorial is therefore 1L-4R x `ln_mid` only, and the
-  baseline is reported separately as the cross-check).
-- **DV**: Per-position OOD accuracy at length 200 on Task 1
-  (matching the RQ9 primary DV).
-- **Controls**: Same widths {128, 256, 512, 1024}; same Task 1;
-  same training-step budget (78K at eff BS 128).
-- **Statistical test**: **two-way ANOVA** on the
-  CoT+Reserved/LN-CoTFormer x `n_embd` panel (architecture as
-  fixed effect, width as fixed effect, interaction term tested),
-  with bootstrap 95 % CI on the interaction effect's eta-squared.
-  Implementation: `statsmodels.formula.api.ols('accuracy ~ C(arch)
-  + C(width) + C(arch):C(width)', data=df).fit()` plus
-  `anova_lm(model, typ=2)`.
-- **H0**: no architecture x `ln_mid` interaction effect on OOD
-  accuracy (architectural treatments are additive).
-- **Falsification**: ANOVA interaction p < 0.05 AND eta-squared
-  greater than 0.02 (a small effect-size lower bound to ensure
-  detected interactions are practically meaningful, per Cohen
-  1988 [49]). Both conditions must hold; significance without
-  effect size, or effect size without significance, is reported
-  as "preliminary suggestion" rather than a falsification.
-- **Ontological purpose**: the truth sought is whether the
-  `ln_mid` mid-block normalisation is a *neutral* architectural
-  ingredient that scales independently of the recurrent
-  inductive bias, or whether it is a *gating* ingredient whose
-  presence changes how the recurrent bias interacts with width.
-  A positive interaction effect is a significant scientific
-  finding because it implies that any future recurrent-depth
-  architecture must report `ln_mid` presence as a first-class
-  hyperparameter rather than an afterthought, and it bears on
-  the interpretation of the reproduction's C2-vs-C1
-  comparison ([§0 Checkpoint Matrix](#checkpoint-matrix)).
-- **Cross-references**: depends on the same training data as
-  RQ9; Pilot 1 has no `ln_mid` analogue and is excluded from
-  RQ9b. The 4L standard Transformer baseline is reported as a
-  cross-check column (no main-effect interaction, by
-  construction).
-
-#### RQ10: Table-2 Unconfound (DEFERRED)
-
-Four-variant 60k training runs to isolate whether the paper's Table 2
-PPL drops came from reduced reasoning space or from LayerNorm absence.
-Cost: ~3-4 L4-days. Deferred post-MLA per DEC-006. If the analysis
-reveals that the `ln_mid` normalisation is the dominant contributor to
-the C2-vs-C1 PPL gap (via the
-[RQ1](#rq1-prediction-convergence-across-repeats-sq1) cross-checkpoint
-comparison), this experiment gains priority.
+- **IV-1**: Architecture in {4L standard, 1L-4R CoT+Reserved, 1L-4R LN-CoTFormer}.
+- **IV-2**: `ln_mid` presence in {absent (CoT+Reserved), present (LN-CoTFormer)}; the 4L baseline lacks `ln_mid` and is excluded from the 2x2 factorial, reported separately as cross-check.
+- **DV**: Per-position OOD accuracy at length 200 on Task 1.
+- **Controls**: widths {128, 256, 512, 1024}; same Task 1; same training-step budget (78K at eff BS 128).
+- **Statistical test**: two-way ANOVA on the CoT+Reserved/LN-CoTFormer x `n_embd` panel with bootstrap 95% CI on interaction eta-squared. Implementation: `statsmodels.formula.api.ols('accuracy ~ C(arch) + C(width) + C(arch):C(width)', data=df).fit()` plus `anova_lm(model, typ=2)`.
+- **H0**: no architecture x `ln_mid` interaction effect on OOD accuracy.
+- **Falsification**: ANOVA interaction p < 0.05 AND eta-squared > 0.02 (small effect-size lower bound per Cohen 1988 [49]); both conditions must hold, otherwise reported as "preliminary suggestion".
+- **Ontological purpose**: tests whether `ln_mid` is a neutral architectural ingredient or a gating ingredient that changes how recurrent bias interacts with width; bears on interpretation of the reproduction's C2-vs-C1 comparison ([§0 Checkpoint Matrix](#checkpoint-matrix)).
+- **Cross-references**: shares training data with RQ9; Pilot 1 has no `ln_mid` analogue and is excluded from RQ9b.
 
 ### 1.3 Experimental Protocols
 
@@ -1665,15 +1321,7 @@ fallback rather than continuing the ladder.
   or structural; if ambiguity persists, [DEC-030](#19-decision-log)
   scope-shedding triggers downgrade DV-2 to single-measurement-preliminary.
 - **FAIL** (Spearman > -0.3, OR linear classifier on entropy
-  alone >= 0.85): the monotone interpretation is refuted on the
-  calibrated substrate. Apply the **REPLACE-WITH-TOP-K-MASS
-  fallback**: DV-2 is replaced by "fraction of attention mass at
-  repeat 5 landing on context tokens that survived to the same
-  repeat or deeper". The fallback metric is directly ontological
-  (it measures integration of equally-processed context, no
-  monotone interpretation required) and is computed at the same
-  point in the [Router Analysis](#13-experimental-protocols)
-  pipeline.
+  alone >= 0.85): on FAIL, DV-2 is replaced by the fraction of attention mass at repeat 5 landing on context tokens that survived to the same repeat or deeper (no monotone interpretation needed).
 
 ##### D-cal compute and implementation
 
@@ -1748,8 +1396,7 @@ GPU needed.
 The counting experiment
 ([RQ9](#rq9-recurrent-inductive-bias-for-algorithmic-counting)) is
 not a protocol on existing checkpoints; it trains new models via
-`iridis/counting-train/job.sh` and evaluates via
-`iridis/counting-eval/job.sh`.
+`iridis/counting-sweep/job.sh` (which also handles evaluation).
 
 ### 1.4 Theoretical Predictions
 
@@ -1778,10 +1425,10 @@ causal".
 - (c) KV-CoRE NER of K/V caches [8] (information-theoretic
   complement)
 
-*Two-tier threshold*: 95 % effective rank < 48 (fraction < 0.75 of
-nominal d_head=64) is the literature-confirmed correlational
-expectation, based on Kobayashi et al. [11]'s direct measurements
-at `wd = 0.1` on a 125M model with identical `d_head = 64`. If
+*Two-tier threshold*: 95 % effective rank < 48 is the
+literature-confirmed correlational expectation, based on Kobayashi
+et al. [11]'s direct measurements at `wd = 0.1` on a 125M model
+with identical `d_head = 64`. If
 rank < 40 is observed, this constitutes evidence for an additional
 compounding effect from 5x weight tying not studied in the
 original work; we report the result as one of three
@@ -1860,9 +1507,7 @@ prediction is novel and not directly calibrated against prior work.
   [Protocol D-calibration](#protocol-d-calibration-rq5-dv-2-attention-entropy-validation)
   is reused for P2 — the monotone-ambiguity is the same
   underlying problem.
-- **Validation gate**: repeat-1 mean entropy must exceed 2.0 bits
-  across all 252 heads. If already near zero (maximally sparse),
-  no decrease is possible and P2 is vacuously unfalsifiable.
+- **Validation gate**: repeat-1 mean attention entropy across all heads exceeds the calibration substrate's per-head H0 entropy by at least one standard deviation under the no-attention-collapse null. If already near zero (maximally sparse), no decrease is possible and P2 is vacuously unfalsifiable.
 
 *Test*: [Protocol C](#protocol-c-implementation-attention-taxonomy--gini--top-k-mass);
 mixed-effects monotonicity test plus paired Gini and top-k mass
@@ -1907,28 +1552,9 @@ across 2000 sequences x 256 attention distributions).
 
 ### 1.6 Reliability Discipline and Triangulation
 
-The lecturer raised two concerns at the analysis proposal stage; the
-pre-Phase-1 hostile review identified a third. Each is codified
-here as a constraint on the experimental programme:
+> **note**: Lecturer raised concerns about interpretability reliability and scope creep; pre-Phase-1 hostile review added multiple-comparisons. Each codified below as an experimental constraint.
 
-**Concern 1 — reliability**: interpretability tools may not give
-"meaningful or reliable" results.
-
-*Constraint*: the triangulation rule is the authoritative
-codification. See [§0 Reliability Discipline](#reliability-discipline)
-for the rule statement and the row-by-row operational-independence
-audit discipline; this subsection consumes that authoritative
-text and applies it to the cross-validation matrix below. A row
-whose primary and secondary measurements share the same forward
-pass *and* the same derived statistic counts as a single
-measurement, and the row's claim downgrades to
-"single-measurement preliminary" with the downgrade explicit in
-the synthesis output. The
-[RQ1](#rq1-prediction-convergence-across-repeats-sq1) Logit Lens
-and Tuned Lens pair is the canonical operationally-independent
-example: the unweighted lens projects through `lm_head(ln_f(h_r))`
-while the Tuned Lens applies a learned affine translator trained
-on KL divergence from the final-layer distribution.
+**Concern 1 — reliability**: addressed by the triangulation rule (see [§0 Reliability Discipline](#reliability-discipline)). A row whose primary and secondary measurements share the same forward pass *and* the same derived statistic counts as a single measurement; the row's claim downgrades to "single-measurement preliminary" with the downgrade explicit in synthesis output. The [RQ1](#rq1-prediction-convergence-across-repeats-sq1) Logit Lens and Tuned Lens pair is the canonical operationally-independent example: the unweighted lens projects through `lm_head(ln_f(h_r))` while the Tuned Lens applies a learned affine translator trained on KL divergence from the final-layer distribution.
 
 | Claim | Primary | Secondary | Tertiary |
 |-------|---------|-----------|----------|
@@ -1947,15 +1573,7 @@ the operational-independence audit; "contradicted" if primary
 and secondary disagree (the disagreement itself is the finding,
 not a measurement failure).
 
-**Concern 2 — scope creep**: the analysis "could become an entire
-project in its own right."
-
-*Constraint*: the 2-week elapsed ceiling (see
-[Scope Discipline](#scope-discipline)) and the
-[Scope-shedding pre-registered order](#scope-shedding-pre-registered-order).
-Protocols that do not produce triangulated results by the ceiling
-are moved to "future work" regardless of completion status; the
-shedding order in §0 governs which protocols are sacrificed first.
+**Concern 2 — scope creep**: addressed by the 2-week elapsed ceiling (see [Scope Discipline](#scope-discipline)) and the [Scope-shedding pre-registered order](#scope-shedding-pre-registered-order). Protocols that do not produce triangulated results by the ceiling are moved to "future work" regardless of completion status.
 
 ##### Concern 3: multiple comparisons correction
 
@@ -2007,152 +1625,17 @@ column.
 
 ### 1.7 Code and Infrastructure Strategy
 
-#### Layout
-
-All analysis code lives in a new `analysis/` top-level Python
-package with informative script names (DEC-002):
-
-```
-analysis/
-├── __init__.py
-├── common/
-│   ├── __init__.py
-│   ├── loader.py             load_model_from_checkpoint
-│   ├── sites.py              ActivationSite enum + enumerate_sites
-│   ├── collector.py          ActivationCollector (one forward per ckpt)
-│   ├── data.py               iterate_owt2_val
-│   ├── spectral.py           effective_rank, PR, kv_core_rank, NER
-│   ├── stats.py              partial_correlation, paired_t_test
-│   └── plotting.py           setup_figure, site_label, palette
-├── logit_lens.py             RQ1 unweighted
-├── tuned_lens.py             RQ1 tuned: translator training + triangulation
-├── cka.py                    RQ2
-├── attention_taxonomy.py     RQ3 (ports flash/causal switch + reshape)
-├── router_analysis.py        RQ4 + RQ5
-├── residual_diagnostics.py   SQ1 / Protocol E
-├── effective_dim.py          RQ6
-├── kv_rank.py                Protocol G / extension design
-├── interpolation_validity.py RQ7
-├── depth_emb_freeze.py       RQ8
-└── synthesis.py              Cross-checkpoint plotting
-```
-
-Multi-concern scripts (`router_analysis.py` hosts both
-[RQ4](#rq4-router-validity-sq3) and
-[RQ5](#rq5-context-preservation-under-adaptive-depth-sq4)) carry a
-comment at the top pointing at the corresponding RQ block in this
-document. The existing `analyze_kv_compression.py` is absorbed into
-`analysis/kv_rank.py`.
-
-A new `data/counting.py` module provides the synthetic counting
-dataset generator for
-[RQ9](#rq9-recurrent-inductive-bias-for-algorithmic-counting); see
-the BLOCKER 4 specification under [§1.2 RQ9](#rq9-recurrent-inductive-bias-for-algorithmic-counting) for the five-file
-refactor that wires the counting dataset into the training loop.
-
-A new `analysis/calibration/` sub-package hosts the
-[Protocol D-calibration](#protocol-d-calibration-rq5-dv-2-attention-entropy-validation)
-implementation: `entropy_calibration.py` (entry point),
-`synth_sequences.py` (two-condition generators), and
-`preregister.md` (frozen pre-registration document).
+`analysis/` package file tree: see extend-technical.md §2 (canonical engineering layout). Multi-concern script ownership and the `analysis/calibration/` + `data/counting.py` module bindings are documented inline in tech §2.
 
 ##### Common loader hook for module-path generality
 
-Per the pre-Phase-1 hostile review's cross-architecture finding
-(the calibration substrate spans GPT-2-large with module path
-`model.transformer.h` and our CoTFormer variants with module path
-`model.transformer.h_mid`), the shared `analysis/common/loader.py`
-accepts a `--module-path` argument that resolves to either the
-standard transformer block list or the CoTFormer mid-block list at
-hook-registration time. The default is `model.transformer.h_mid`
-to preserve the analysis main analytic sub-stream's existing behaviour;
-the calibration entry point passes `--module-path
-model.transformer.h` when running Tier 1 (GPT-2-large). The
-loader is otherwise architecture-agnostic; any HuggingFace-style
-or nanoGPT-style transformer with a list-of-blocks attribute is
-loadable through the same hook.
-
-#### HPC packages
-
-| Package | Purpose | Queue position |
-|---------|---------|---------------|
-| `iridis/analyze-lncot+adm/job-gpu.sh` | GPU protocols (~2.7 h, including Protocol D-calibration Tier 1 + Tier 2) | 1st |
-| `iridis/analyze-lncot+adm/job-cpu.sh` | CPU protocols + Tuned Lens training + calibration analysis (~5.7 h) | 2nd |
-| `iridis/counting-train/job.sh` | Pilot 1 (5 seeds at n_embd=1024) + main sweep (42 runs) | 3rd |
-| `iridis/counting-eval/job.sh` | RQ9 + RQ9b OOD evaluation across {50-200} | 4th |
-| `environment.yml` | **Phase 0 deliverable**: pinned `pytorch == 2.2.*+cu118`, `numpy < 2`, `scikit-learn >= 1.3`, `pingouin >= 0.5` (mixed-effects), `statsmodels >= 0.14` (ANOVA, MixedLM), `muon-optimizer` (from `github.com/KellerJordan/Muon` per [DEC-017](#19-decision-log) Tuned Lens fallback). The conda env is rebuilt on every Iridis-X login node before HPC submission; the resolved lockfile is committed to the repo as `environment.lock.yml` for bit-exact reproduction. | Phase 0 |
-
-##### env.sh consolidation
-
-Per [DEC-026](#19-decision-log) (T8 finding consolidation),
-`iridis/env.sh` is the **single source of truth** for
-HPC-environment variables shared across the four HPC packages:
-`WANDB_MODE=offline`, `NCCL_PROTO=Simple`, `EXPS_DIR`,
-`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`,
-`TIKTOKEN_CACHE_DIR`. Every `iridis/*/job.sh` script `source`s
-this file once at the top, before any other configuration; the
-job scripts contain **no inline assignments** to these variables.
-This eliminates the cross-package drift that surfaced during the
-reproduction when `WANDB_MODE` was set inconsistently across the LN-CoTFormer
-and ADM job scripts. The Phase 1 skeleton orch's first task is
-to grep every `iridis/*/job.sh` for redundant assignments and
-remove them.
+Per the cross-architecture finding in the pre-Phase-1 hostile review, `analysis/common/loader.py` accepts `--module-path` to switch between standard transformer (`model.transformer.h`) and CoTFormer (`model.transformer.h_mid`) module paths; default is `h_mid`. Engineering details: extend-technical.md §8.9.
 
 #### Branch strategy (DEC-009)
 
-The analysis develops entirely on `main`. The `origin/tak-ablation-code` branch
-is ported as standalone Python modules, not cherry-picked commits.
-Rationale: the tak branch is missing five critical DDP infrastructure
-fixes (Gloo `cpu_group`, Gloo gather, atomic `/tmp`+`shutil.copy2`
-save, `broadcast_buffers=False`, `NCCL_PROTO=Simple`) that main
-carries. Switching would either accept DDP hang risk or require
-forward-porting all five fixes.
+The analysis develops on the `abeprobes` branch; the paper-reproduction code stays on `main`. The branch protocol is canonical in extend-technical.md §5. Rationale: the `origin/tak-ablation-code` branch is missing five DDP infrastructure fixes that `main` carries; switching would either accept DDP hang risk or require forward-porting all five (see extend-technical.md §5.5).
 
-**Specific ports**:
-
-| Source (tak branch) | Target | What |
-|---------------------|--------|------|
-| `models/depthemb_eval_metrics.py:540-554` | `analysis/logit_lens.py` | JSD projection via `lm_head(ln_f(h_r))` |
-| `models/depthemb_eval_metrics.py:374-512` | `analysis/common/collector.py` | Replaced by forward-hook collector |
-| `models/fixed_cot_attn.py:152-172` | `analysis/attention_taxonomy.py` | Flash/causal switch (monkey-patch) |
-| `models/fixed_cot_attn.py:383-426` | `analysis/attention_taxonomy.py` | Reshape pipeline + 7 attention metrics |
-
-##### SHA pinning header convention (DEC-026 T11)
-
-Each ported file's top-of-file header must record the source SHA
-and line range so that the upstream-vs-port relationship survives
-both branch evolution and refactoring. The header pattern is:
-
-```
-# Ported from origin/tak-ablation-code@<7-char-SHA> :: <relative path on tak's branch> L<start>-L<end>
-# Ported on <YYYY-MM-DD> by <author handle>
-# Original-author rationale: <one-line summary; cite tak's commit message if present>
-```
-
-The `<7-char-SHA>` is the abbreviated `git rev-parse --short=7
-HEAD` of the tak branch at the moment of porting, captured at
-port time and frozen — subsequent updates to the tak branch do
-not invalidate the header. If a port is later updated to a newer
-SHA, the entire header is replaced (not appended to), and the
-git history records the SHA bump. The convention is enforced by
-a Phase 0 lint check (`scripts/check_port_headers.py`) that
-greps the `analysis/` package for files containing `tak-` and
-verifies the header pattern; missing or malformed headers fail
-the check.
-
-**Explicitly NOT ported** (with rationale):
-
-- `distributed/ddp.py` 30-to-60 min timeout (tak flagged as TODO in
-  commit `9a833b2`).
-- `optim/base.py` `eval_steps = 24` hardcode (regression vs main's
-  conditional).
-- `optim/base.py` `get_raw_model` eval wrap (duplicate of main's B9
-  chain).
-- `models/__init__.py` `flash_train_caus_eval` import (broken -- file
-  does not exist on tak's branch).
-- `optim/modifed_base.py` (orphan with 0 importers, typo in
-  filename).
-- `models/tak_custom_cot.py` (superseded by `fixed_cot_attn.py`).
+Tak-branch port table, SHA-pin header convention, and the Explicitly-NOT-ported list: extend-technical.md §§5.5-5.7 (engineering canonical).
 
 ### 1.8 Compute Budget and Sequencing
 
@@ -2242,6 +1725,18 @@ Arm A (Pilot 1 Chang and Bisk-exact).
 | Analysis + plotting | ~3 h CPU |
 | **Total (Arm A + Arm B initial wave)** | **~7-10 L4-days on 2x L4** |
 
+##### Arm B 32-cell consolidated matrix (DEC-035)
+
+| Width `n_embd` | Seeds per variant | Cells (V1 + V2 + V3 + V4) | Sub-total |
+|---|---|---|---|
+| 1024 | 3 | 4 × 3 | 12 |
+| 512 | 2 | 4 × 2 | 8 |
+| 256 | 2 | 4 × 2 | 8 |
+| 128 | 1 | 4 × 1 | 4 |
+| **Total** | | | **32 cells** |
+
+Per DEC-035 (Arm B secondary-width expansion committed unconditionally; supersedes DEC-033's contingent clause).
+
 The 1024-dim cells dominate compute at ~24-36 h each at 312.5K steps
 at BS=32. The initial wave per [DEC-033](#19-decision-log)
 covers all four V1-V4 variants at `n_embd=1024` with 3 seeds each;
@@ -2274,10 +1769,9 @@ submission.
    + interpolation_validity + depth_emb_freeze; P-C synthesis +
    integration tests.
 4. Phase 3 counting sub-stream (1-2 days code):
-   `iridis/counting-train/` + `iridis/counting-eval/` +
-   `data/counting.py`.
+   `iridis/counting-sweep/` + `data/counting.py`.
 5. Phase 4 execution (4-5 days HPC, linear queue):
-   job-gpu -> job-cpu -> counting-train -> counting-eval.
+   job-gpu -> job-cpu -> counting-sweep (training then in-place eval).
 6. Phase 5 synthesis and writeup (3-5 days).
 
 **Total elapsed**: ~10-12 working days from approval, within the
@@ -2287,31 +1781,20 @@ submission.
 
 | ID | Decision | Value |
 |---|---|---|
-| DEC-000 | RQ roster | RQ1-9 IN, RQ10 deferred post-MLA, Tuned Lens IN as triangulation partner |
-| DEC-001 | RQ7/RQ8 scripts | Separate scripts (`interpolation_validity.py`, `depth_emb_freeze.py`) |
-| DEC-002 | Naming convention | Informative names, no `protocol_*` prefix; multi-concern scripts carry a comment pointing at this document |
-| DEC-003 | Code waves | Split (skeleton orch then body orchs) |
 | DEC-004 | RQ9 ownership | Abe executes, Aras reviews, sequential queue after analysis main |
-| DEC-005 | Attribution cleanup | Withdrawn (Aras = Tevfik Kavuncu = tak1e25, same person) |
-| DEC-006 | RQ10 | Defer post-MLA |
-| DEC-007 | Counting vocab | One-to-one V=256; compositional backlog with RQ10 consideration |
-| DEC-008 | Tuned Lens | Active from start, two-file split, quantitative thresholds, final-layer-correctness conditioning |
+| DEC-007 | Counting vocab | One-to-one V=256; compositional vocabulary deferred to backlog (post-main-analysis) |
 | DEC-009 | Branch strategy | Strategy C -- develop on main, port tak's algorithms as Python modules |
-| DEC-010 | Counting compute-match | Both depth-matched and param-matched baselines; subsumed by DEC-012 width sweep |
-| DEC-011 | Counting step budget | Match gradient steps; report wall-clock separately |
 | DEC-012 (REVISED) | Counting model width | n_embd sweep {128, 256, 512, 1024}, n_head=4, d_ff=4 x n_embd |
 | DEC-012a | Validation gate | 4L baseline >= 80 % IND accuracy before CoTFormer comparison per width |
 | DEC-012b | BOS token | Include in sequence format (RoPE depends on BOS) |
 | DEC-012c | Shifted PEs | Randomise starting position for OOD-position robustness |
 | DEC-013 | Counting primary task | Task 1 (shifted-start sequential) primary; Tasks 2-3 secondary |
-| DEC-014a | Counting NoPE condition | Defer |
 | DEC-014b | Counting start-token loss | Mask out (exclude trivial first-output from CE) |
 | DEC-015 | n_repeat for RQ9 | 4 (depth-matched to 4L); repeat=5 backlogged |
 | DEC-016 | Training steps | 312.5K at BS=32, matching Chang and Bisk [25] |
 | DEC-017 | Tuned Lens fallback | SGD first, Muon if convergence poor |
-| DEC-018 | RQ9 CoTFormer variants | Both CoT+Reserved (no `ln_mid`) and LN-CoTFormer (with `ln_mid`) at all widths. ADM excluded (routing disabled). 36 total runs |
 | DEC-019 | RQ9 baseline config | Match Chang and Bisk codebase: ReLU activation, grad\_clip=0.3, `scale_attn_by_inverse_layer_idx=True`, task-specific vocabulary (V=203 for te200) |
-| DEC-020 | DEC-019 reconciliation | Chang and Bisk reference codebase diverges from paper-implied defaults on seven training-regime parameters: `inductive_counting_with_LMs/scripts/causal_transformer/trainer.py:231 max_grad_norm=1.0` (paper prose said 0.3 but the dead-code value at `config.py:28` is never read), `trainer.py:72 get_constant_schedule_with_warmup` (not cosine), `trainer.py:70 AdamW` defaults `wd=0.01`, `beta2=0.999` (no decay grouping), `config.py:13 n_head=8` at `n_embd=1024`, `trainer.py:52 fp16`, `trainer.py:211 enable_flash=False`. Pilot 1 adopts Chang and Bisk-exact; the main sweep uses CoTFormer-native defaults. See `docs/reprod-notes.md` §B12 for the dead-code documentation. | Post-hostile-review |
+| DEC-020 | DEC-019 reconciliation | Chang and Bisk's reference codebase diverges from paper-implied defaults on seven training-regime parameters: `max_grad_norm=1.0` (paper prose said 0.3 but the dead-code value is never read), `get_constant_schedule_with_warmup` (not cosine), AdamW defaults `wd=0.01`/`beta2=0.999` with no decay grouping, `n_head=8` at `n_embd=1024`, `fp16`, and `enable_flash=False`. [DEC-035](#19-decision-log) adds two further divergences (`--disable_decay_grouping` and `--positional_encoder none`) for a current total of nine. Pilot 1 adopts Chang and Bisk-exact; the main sweep uses CoTFormer-native defaults. Operational enumeration: [§1.2 RQ9](#rq9-recurrent-inductive-bias-for-algorithmic-counting) Pilot 1 row; dead-code documentation: `docs/reprod-notes.md` §B12. | Post-hostile-review |
 | DEC-021 | Twin-pilot design | Pilot 1 = Chang and Bisk-exact at `n_embd=1024` 4L with 5 seeds; main sweep = CoTFormer-native at all four widths with 5 seeds at `n_embd in {256, 1024}` and 3 seeds at `{128, 512}`. Comparison isolates the training-regime effect from the architecture effect. | Abe 2026-04-18 |
 | DEC-022 | Novelty Claim 1 narrow reframing | "First mechanistic interpretability study of iterative/recurrent transformers" replaced with the CoTFormer-specific scope: cross-repeat KV attention + weight-tied mid-block with reserved begin/end layers + canonical Belrose 2023 Tuned Lens at five virtual layers. Cite Lu et al. [27] and Chen et al. [28] as closest prior art. | Abe 2026-04-18 |
 | DEC-023 | Novelty Claim 2 narrow reframing | "First Tuned Lens on weight-tied architecture" reframed as the canonical Belrose 2023 [24] Tuned Lens (affine + bias, SGD + Nesterov, forward-KL, identity-init) on a CoTFormer-style weight-tied depth-recurrent transformer with cross-repeat KV attention. Closest prior art: Paulo et al. [30]. | Abe 2026-04-18 |
@@ -2322,27 +1805,15 @@ submission.
 | DEC-028 | RQ9b explicit pre-registration | 2x2 factorial CoT+Reserved-vs-LN-CoTFormer x `n_embd`; two-way ANOVA on the architecture x `ln_mid` interaction effect; falsification at p < 0.05 with eta-squared > 0.02. | Abe 2026-04-18 |
 | DEC-029 | Calibration substrate three-tier | Tier 1 GPT-2-large (literature-grounded primary), Tier 2 ADM C5 (target-architecture primary; ADM wins when tiers disagree), Tier 3 24L standard (contingency; triggers Phase-0 conditional training). Pre-registration in `analysis/calibration/preregister.md`. | Abe 2026-04-18 |
 | DEC-030 | Scope-shedding hybrid trigger | Pilot 1 fail at approximately day 3 sheds RQ9 to the extension (analytic sub-stream continues); calibration inconclusive at approximately day 5 flags DV-2 single-measurement-preliminary; day-10 progress under 60 % sheds in order RQ8 → RQ5 → RQ9. Triggers checked at day-3, day-5, day-10 review checkpoints with Abe-authorised one-way shedding inside the analysis. | Abe 2026-04-18 |
-| DEC-031 | Seed assignments and symmetry | Pilot 1 uses Chang and Bisk's `[1234, 12]`-style seed convention (extended to 5 seeds for parity with main-sweep `n_embd=1024`); main sweep uses the project's `(train = 2357, val = 8191, ood = 19937)` convention. Bump main-sweep `n_embd=1024` from 3 to 5 seeds for symmetry with `n_embd=256` (+6 extra runs, ~6-12 L4-hours). | Abe 2026-04-18 |
 | DEC-032 | 48L standard training deferred post-analysis | Cite the paper's 48L standard baseline (24.17 PPL from Table 1 of [3]) rather than reproducing it. Train 24L standard only IF Tier 1 (GPT-2-large) and Tier 2 (ADM C5) calibration verdicts disagree; defer 48L standard to post-analysis. | Abe 2026-04-18 |
-| DEC-033 | RQ9 three-arm redesign: breadth-over-depth + four CoTFormer variants + step-matched budget + contingent C&B-adapted arm | RQ9 is restructured as three arms: (Arm A) Pilot 1 Chang and Bisk-exact 4L standard at `n_embd=1024`, the ONLY strict-reproduction control; (Arm B) four CoTFormer variants V1 (`cotformer_full_depth`, no reserved), V2 (CoT+Reserved with 2+1 reserved, **7 effective layers, compared against the 4L standard with the depth asymmetry reported as a secondary finding about reserved layers plus recurrence jointly per Option (c)**), V3 (LN-CoTFormer), V4 (ADM) at widths starting from `n_embd=1024` under the CoTFormer-native regime; (Arm C) same four variants with C&B-adapted hyperparameters (ReLU, `max_grad_norm=0.3`, CoTFormer-specific `scale_attn_by_inverse_layer_idx`), triggered **contingent on Arm B divergences** only. Training-step budget reverts from match-samples 78K-at-BS-128 ([DEC-031](#19-decision-log)) to step-matched **312.5K steps at BS=32** per cell (matching Chang and Bisk [25], restoring the original [DEC-016](#19-decision-log)). Seed allocation is **breadth-over-depth**: **initial wave is 4 architectures x 3 seeds at `n_embd=1024` = 12 cells** (~6-9 L4-days on 2x L4); secondary-width expansion to `{128, 256, 512}` at reduced per-cell seed count is contingent on initial-wave results and remaining budget. DEC-018 (ADM excluded) is superseded by this entry; ADM is now included with routing DISABLED (min_repeat = n_repeat = 4) for comparability with the non-adaptive variants. DEC-031 (match-samples 78K-at-BS-128 and seed-symmetry bumps) is superseded. The V2 depth-match ambiguity is resolved via **Option (c)**: run V2 at its paper-canonical 7 effective layers, compare against the 4L standard only, acknowledge the asymmetry as a secondary finding about reserved layers plus recurrence. | Abe 2026-04-22 |
+| DEC-033 | RQ9 three-arm redesign: breadth-over-depth + four CoTFormer variants + step-matched budget + contingent C&B-adapted arm | RQ9 is restructured as three arms: (Arm A) Pilot 1 Chang and Bisk-exact 4L standard at `n_embd=1024`, the ONLY strict-reproduction control; (Arm B) four CoTFormer variants V1 (`cotformer_full_depth`, no reserved), V2 (CoT+Reserved with 2+1 reserved, **7 effective layers, compared against the 4L standard with the depth asymmetry reported as a secondary finding about reserved layers plus recurrence jointly per Option (c)**), V3 (LN-CoTFormer), V4 (ADM) at widths starting from `n_embd=1024` under the CoTFormer-native regime; (Arm C) same four variants with C&B-adapted hyperparameters (ReLU, `max_grad_norm=0.3`, CoTFormer-specific `scale_attn_by_inverse_layer_idx`), triggered **contingent on Arm B divergences** only. Training-step budget reverts from match-samples 78K-at-BS-128 ([DEC-031](#19-decision-log)) to step-matched **312.5K steps at BS=32** per cell (matching Chang and Bisk [25], restoring the original [DEC-016](#19-decision-log)). Seed allocation is **breadth-over-depth**: **initial wave is 4 architectures x 3 seeds at `n_embd=1024` = 12 cells** *(secondary-width expansion now committed unconditionally per DEC-035; final Arm B = 32 cells.)* (~6-9 L4-days on 2x L4); secondary-width expansion to `{128, 256, 512}` at reduced per-cell seed count is contingent on initial-wave results and remaining budget. DEC-018 (ADM excluded) is superseded by this entry; ADM is now included with routing DISABLED (min_repeat = n_repeat = 4) for comparability with the non-adaptive variants. DEC-031 (match-samples 78K-at-BS-128 and seed-symmetry bumps) is superseded. The V2 depth-match ambiguity is resolved via **Option (c)**: run V2 at its paper-canonical 7 effective layers, compare against the 4L standard only, acknowledge the asymmetry as a secondary finding about reserved layers plus recurrence. | Abe 2026-04-22 |
 | DEC-034 | Tuned Lens target-residual site + batch size alignment with canonical Belrose 2023 | The Tuned Lens target-residual is the PRE-`ln_f` residual (the input to `ln_f`), captured via the new `ActivationSite.RESIDUAL_PRE_LN_F` pre-hook; `p_final` is computed as `softmax(lm_head(ln_f(h_pre_ln_f)))` so `ln_f` is applied exactly once on both lens and target paths. This removes the earlier POST-`ln_f` approximation where `ln_f` was applied twice on the target. Translator batch size is 256 tokens per SGD step, matching Belrose 2023 [24] exactly rather than the interim 64-token default. Rationale: preserves the DEC-023 Novelty Claim 2 framing "canonical Belrose 2023 Tuned Lens" without approximation caveats; the pre-`ln_f` capture adds one extra `.npy` per workspace (~6 MB for 2048 tokens at `n_embd=768`) and negligible compute. | Abe 2026-04-22 |
-| DEC-035 | RQ9 spec realignment: BLOCKER 6 closure + Arm A strict-fidelity additions + Arm B secondary-width expansion | Four realignments after the Phase 3 P3 RQ9 orch surfaced gaps in the skel-1 plumbing and DEC-033 allocation. (a) **BLOCKER 6 closure (ESC-001 resolution)**: `attention_mask` kwarg is now plumbed through `GPTBase.forward` -> `Block.forward` -> `CausalSelfAttention.forward` on all three CoTFormer variants (`cotformer_full_depth`, `cotformer_full_depth_lnmid_depthemb`, `adaptive_cotformer_mod_efficient_sigmoid_crw_lnmid_de_random_factor_single_final`) matching the `but_full_depth` pattern at `models/but_full_depth.py:97,142,153,167,170,233,239,340`. The additive pad-key bias is tiled across the cross-repeat K cache via the `reps_so_far = T_k // T_q` factor. The ADM variant tracks `active_attention_mask` alongside `active_indices` through the MoD token-drop chain (identity under the V4 routing-disabled `min_repeat=n_repeat=4` configuration; raises `NotImplementedError` when `T_k` is not a multiple of `T_q`, surfacing unsupported heterogeneous-active-length routing rather than silently mis-masking). (b) **Arm A disable_decay_grouping (ESC-002 resolution)**: new `--disable_decay_grouping {True,False}` flag on `config/base.py`; `main.py` conditional replaces `get_parameter_group_specs()` with flat `model.parameters()` when True. Matches Chang and Bisk `trainer.py:70` exactly (flat `AdamW(model.parameters(), lr=config.learning_rate)`). Eighth C&B divergence; Arm A sets True, Arm B sets False. (c) **Arm A positional_encoder=none (ESC-003 resolution)**: Chang and Bisk's `Basic_Config` at `config.py:44-55` defaults every posemb flag to False (absolute / rotary / scaler / sinusoidal), so the `te200` task runs with NoPE. CoTFormer already registers `"none"` as an identity `PositionalEncoder` (no change to models/positional_encoders/ needed); Arm A now passes `--positional_encoder none` via the counting-sweep job.sh Arm A dispatch block. Ninth C&B divergence. (d) **Arm B secondary-width expansion committed (ESC-004 option 1)**: DEC-033's "contingent on initial-wave results and remaining budget" clause is superseded; the expansion runs unconditionally across `n_embd in {128, 256, 512, 1024}` at reduced per-width seed counts (1024: 3 seeds; 512: 2; 256: 2; 128: 1) for 4 variants x 8 width-seed = **32 Arm B cells** total. ~24-96 additional L4-hours vs the 12-cell initial-wave budget. Rationale: the initial-wave 12-cell roster has exactly one empty 2x2 cell under either DEC-028 variant-to-factor mapping, making the pre-registered interaction test unidentifiable; the secondary-width expansion populates a `n_embd x architecture` factorial alternative with more granularity on the `ln_mid` effect across widths. | Abe 2026-04-22 |
+| DEC-035 | RQ9 spec realignment: BLOCKER 6 closure + Arm A strict-fidelity additions + Arm B secondary-width expansion | RQ9 Phase 3 spec realignment — (a) BLOCKER 6 `attention_mask` plumbing closed across all three CoTFormer variants (ESC-001 resolution; see extend-technical.md §3.6); (b) Arm A `--disable_decay_grouping` flag added (ESC-002, eighth Chang-Bisk divergence); (c) Arm A `--positional_encoder none` flag added (ESC-003, ninth Chang-Bisk divergence); (d) Arm B secondary-width expansion committed unconditionally for a **32-cell** factorial (ESC-004 option 1; supersedes DEC-033's "contingent on initial-wave results" clause). DEC-018 and DEC-031 fully superseded by this entry. | Abe 2026-04-22 |
 
 #### Backlog items (deferred post-main-analysis)
 
-- **repeat=5 counting**: reproduce
-  [RQ9](#rq9-recurrent-inductive-bias-for-algorithmic-counting) with
-  n_repeat=5 to align with the original 24-layer CoTFormer's 5-repeat
-  architecture.
-- **Compositional vocabulary**: test multi-digit tokenisation (each
-  digit = one token) as a follow-up to the whole-number tokenisation
-  baseline. Compositional tokenisation increases effective sequence
-  length (e.g., "137" becomes three tokens ["1", "3", "7"]), which
-  expands the attention window and may reveal attention specialisation
-  absent in the short-sequence whole-number setting. This also
-  enables counting to arbitrarily large integers (no fixed vocabulary
-  ceiling), providing a stronger OOD generalisation test. Scope to
-  be defined after the primary RQ9 results are analysed.
+- **repeat=5 counting**: re-run RQ9 at n_repeat=5 to align with the original 24L CoTFormer architecture.
+- **Compositional vocabulary**: multi-digit tokenisation as a follow-up to the whole-number baseline; tests OOD generalisation without a fixed vocabulary ceiling.
 
 #### Novel contributions confirmed (narrow reframings)
 
@@ -2368,6 +1839,8 @@ Each extension is motivated by specific analysis findings. Implementation detail
 are deliberately brief -- they will be expanded once analysis results inform design.
 
 ### 2.1 Multi-Head Latent Attention (MLA)
+
+> **Status**: post-M2 deliverable; design pending mechanistic-analysis findings. Activated upon analysis completion.
 
 #### Motivation
 
@@ -2397,6 +1870,8 @@ See Appendix A for projection architecture and dimensionality reference.
 
 ### 2.2 Manifold-Constrained HyperConnections (mcHC)
 
+> **Status**: post-M2 deliverable; design pending mechanistic-analysis findings. Activated upon analysis completion.
+
 mcHC [6] generalises residual connections via multi-stream routing (`alpha`
 streams, learned `C in R^{alpha x alpha}` per layer, Stiefel-constrained).
 For CoTFormer: different subspaces routed through different repeats.
@@ -2407,6 +1882,8 @@ weak = mcHC as router replacement. CKA collapse (RQ2) = strong motivation.
 Design: alpha=2, mid-layers only. Memory: 2x hidden state. Params: 8/layer.
 
 ### 2.3 Causal Cross-Repeat Mask for ADM
+
+> **Status**: post-M2 deliverable; design pending mechanistic-analysis findings. Activated upon analysis completion.
 
 The ADM uses `is_causal=False` with an index-based mask (`k_indices <= indices`)
 that enforces temporal ordering but ignores repeat-depth structure. A token at
@@ -2419,6 +1896,8 @@ modified mask, identical hyperparameters.
 Design pending analysis Protocol C (attention taxonomy) and literature findings.
 
 ### 2.4 Residual Attention
+
+> **Status**: post-M2 deliverable; design pending mechanistic-analysis findings. Activated upon analysis completion.
 
 Instead of compressing the full accumulated KV cache (grows linearly with R),
 attend directly to per-position residual deltas across repeats. The "residual

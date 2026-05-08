@@ -1,0 +1,104 @@
+# =============================================================================
+# environment.lock.yml -- Resolved Conda lockfile for the CoTFormer project
+# =============================================================================
+#
+# REGENERATE ON IRIDIS LOGIN NODE BEFORE NEXT HPC SUBMISSION.
+#
+# Status: STUB / placeholder.
+#
+# Why this file is a stub
+# -----------------------
+# A faithful lockfile must be resolved on the same Linux + CUDA 11.8
+# platform that compute nodes run, so the bit-exact builds (the
+# pytorch=2.2.*=py3.10_cuda11.8* hash, MKL versions, glibc-tied wheels,
+# the muon-optimizer pip commit hash, etc.) match what Iridis actually
+# loads. Resolving on a different toolchain (e.g. WSL-Ubuntu with no
+# CUDA, or macOS, or any conda-forge-only channel mix) emits a lockfile
+# whose builds will not satisfy the Iridis solver and may silently mask
+# numpy<2 or pytorch-cuda channel pins. A stub with regen instructions
+# is preferable to a hallucinated full lockfile.
+#
+# How to regenerate (Iridis login node, internet required)
+# --------------------------------------------------------
+# From the repo root:
+#
+#   # 1. Resolve the dependency graph into a throwaway env (dry-run).
+#   conda env create -f environment.yml -n cotformer-lockgen --dry-run
+#
+#   # 2. Materialise the env (because muon-optimizer is pip-installed
+#   #    after env creation, the dry-run alone does not capture it).
+#   conda env create -f environment.yml -p /scratch/$USER/cotformer-lockgen
+#   conda activate /scratch/$USER/cotformer-lockgen
+#   pip install --no-deps git+https://github.com/KellerJordan/Muon
+#
+#   # 3. Export the resolved env without local builds, overwriting this
+#   #    file. --no-builds keeps the lockfile cross-host portable while
+#   #    still pinning every version.
+#   conda env export -p /scratch/$USER/cotformer-lockgen --no-builds \
+#       > environment.lock.yml
+#
+#   # 4. Commit the regenerated lockfile (Abe commits, not agents).
+#   #    Then remove the temporary env to free /scratch quota:
+#   conda env remove -p /scratch/$USER/cotformer-lockgen
+#
+# Verifying the lockfile satisfies the project pins
+# -------------------------------------------------
+# After regen, sanity-check that the four hard pins survive:
+#   - python == 3.10.*
+#   - pytorch == 2.2.* with the cuda11.8 build string
+#   - numpy < 2 (PyTorch 2.2 uses the NumPy 1 C-API; numpy 2.x crashes
+#     torch.from_numpy -- see docs/reprod-notes.md)
+#   - muon-optimizer recorded with its commit hash in the pip block
+#
+# Source spec (mirror of environment.yml at lockfile-generation time)
+# -------------------------------------------------------------------
+# The block below is a verbatim copy of environment.yml as of this
+# stub's creation, included so a teammate can rebuild from this file
+# alone if environment.yml drifts. When you regenerate, this entire
+# placeholder body is replaced by the resolved `conda env export`
+# output and this comment block goes away.
+#
+# =============================================================================
+
+name: cotformer-env
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  # PyTorch 2.2 / CUDA 11.8 pin: ABI-compatible with numpy<2.
+  - pytorch::pytorch=2.2.*=py3.10_cuda11.8*
+  - pytorch::torchvision=0.17.*
+  - pytorch::torchaudio=2.2.*
+  - pytorch::pytorch-cuda=11.8
+  # Numerics. numpy<2 is hard: PyTorch 2.2 uses the NumPy 1 C-API and
+  # torch.from_numpy crashes on NumPy 2.x (see docs/reprod-notes.md).
+  - numpy<2
+  - scipy>=1.11
+  # Analysis statistics (mechanistic-analysis protocols).
+  - scikit-learn>=1.3
+  - statsmodels>=0.14
+  - pingouin>=0.5
+  # Serialisation and dataset plumbing.
+  - orjson
+  - tiktoken
+  - zstandard
+  - tqdm=4.65.0
+  - einops
+  # Plotting.
+  - matplotlib
+  - seaborn
+  # Model utilities.
+  - transformers
+  - wandb
+  # Pip-only dependencies (installed after conda env creation).
+  - pip
+  - pip:
+      - ptflops
+      # Muon optimiser fallback for the Tuned Lens training recipe per
+      # DEC-017 (canonical SGD + Nesterov, muon as fallback). The pip
+      # spec uses the upstream GitHub repo so the lockfile records the
+      # exact commit at resolution time.
+      - git+https://github.com/KellerJordan/Muon@main#egg=muon-optimizer

@@ -34,8 +34,23 @@
 # monkey-patched forward's Q/K re-compute incur ~8x the flash-backend per-
 # block cost; per-checkpoint wall time is ~9 min L4 (§1.8 compute budget).
 #
-# Stage-5 synthesis lives on the CPU side in job-cpu.sh; this script
-# does not run it.
+# Wave 3 additions (RQ5 / RQ7 / RQ8):
+#   * Protocol D-calibration (substrate-specific, not per-checkpoint):
+#     Tier 1 (GPT-2-large) + Tier 2 (ADM C5) forward passes per
+#     §1.3 Protocol D-cal three-tier substrate. Tier 3 is contingent
+#     and not wired. Per-tier outputs go to $RUN_DIR/d_cal/tier{1,2}/.
+#   * Protocol H Interpolation Validity (RQ7): runs on C4 + C5 only per
+#     §1.5 Matrix row "H: Interp. Validity"; clone-set permutation test
+#     with N=10000 permutations (DEC-026). ~10 min L4 per checkpoint.
+#   * Protocol I Depth-Embedding Freeze (RQ8): runs on C3 only per
+#     §1.5 Matrix row "I: Depth-Emb Freeze"; iterates the 8 freeze
+#     conditions (Cartesian {freeze, unfreeze} x {zero, preserve, random}
+#     plus DEC-026 zero-vector controls). ~21 min L4 across all 8.
+#
+# Stage-5 synthesis is local-friendly per the synthesis docstring (pure
+# plotting + scalar aggregation, no GPU/SVD/forward). It is wired as a
+# top-level Makefile target (`make synthesis`) consuming rsync'd
+# run_N/<tag>/ artefacts; it does NOT run inside this SLURM job.
 #
 # Output structure:
 #   run_N/
@@ -104,6 +119,50 @@ KV_TARGET_RANK=192
 # absent config.data_dir in the checkpoint's summary.json. Empty means
 # "use config.data_dir".
 DATA_DIR_OVERRIDE="${DATA_DIR_OVERRIDE:-/scratch/$USER/datasets}"
+
+# Protocol H (interpolation_validity / RQ7) tag whitelist per §1.5 Analysis
+# Matrix row "H: Interp. Validity" -- runs only on C4 (MoD baseline) and C5
+# (ADM v2). Other tags fall through unchanged.
+INTERP_VALIDITY_TAGS_REGEX='^(c4_mod_40k|c5_adm_v2_60k)$'
+# Clone-set size and permutation count per docs/extend-notes.md §1.2 RQ7
+# (DEC-026: N=10000 permutations).
+INTERP_CLONE_SIZE=64
+INTERP_N_PERMUTATIONS=10000
+
+# Protocol I (depth_emb_freeze / RQ8) tag whitelist per §1.5 Matrix row
+# "I: Depth-Emb Freeze" -- runs only on C3 (LN-CoTFormer at 60k). Other
+# tags fall through unchanged.
+DEPTH_FREEZE_TAGS_REGEX='^c3_lncot_60k$'
+# Bootstrap count per docs/extend-notes.md §1.2 RQ8 (paired-bootstrap p<0.01).
+DEPTH_FREEZE_N_BOOTSTRAP=10000
+# 8-condition spec per docs/extend-notes.md §1.2 RQ8: Cartesian product of
+# {freeze, unfreeze} x {zero, preserve, random} plus two matched controls
+# (DEC-026 zero-vector condition addition). Each invocation specifies one
+# (freeze_mode, freeze_target) pair; the target index uses the reverse-
+# index convention of the forward loop at
+# models/cotformer_full_depth_lnmid_depthemb.py:354 (see protocol docstring).
+DEPTH_FREEZE_CONDITIONS=(
+    "freeze|zero|1"
+    "freeze|preserve|1"
+    "freeze|random|1"
+    "unfreeze|zero|1"
+    "unfreeze|preserve|1"
+    "unfreeze|random|1"
+    "freeze|zero|2"
+    "freeze|preserve|2"
+)
+
+# Protocol D-calibration (RQ5 entropy calibration) substrate config per
+# docs/extend-notes.md §1.3 Protocol D-cal three-tier substrate. Tier 1
+# is GPT-2-large (HF identifier; resolved via $HF_HOME by transformers on
+# the compute node -- the login-node script cache_huggingface_model.py
+# pre-populates the cache). Tier 2 is the ADM C5 checkpoint already in
+# VERSIONS. Tier 3 is contingent and NOT wired (per directive).
+DCAL_TIER1_CKPT="gpt2-large"
+DCAL_TIER2_TAG="c5_adm_v2_60k"
+# Primary-ladder n-per-condition default per the protocol docstring;
+# AMBIGUOUS-verdict retry uses 4000 and is invoked manually.
+DCAL_N_PER_CONDITION=1000
 
 # ========================= END CONFIGURATION ================================
 
@@ -299,7 +358,147 @@ for version_entry in "${VERSIONS[@]}"; do
     echo "    $TAG_RUN_DIR/attention_taxonomy_heatmap.png"
     echo "    $TAG_RUN_DIR/attention_sparsity_trajectory.png"
 
+    # --- Protocol H: Interpolation Validity (RQ7) ---
+    # §1.5 Matrix row "H: Interp. Validity" runs on C4 + C5 only (the
+    # MoD/ADM checkpoints with adaptive halting). Permutation count per
+    # docs/extend-notes.md §1.2 RQ7 / DEC-026 (10000). Per the protocol
+    # docstring the analysis emits halting-depth statistics + clone-set
+    # entropy + permutation p-value; ~10 min L4 per ckpt at clone-size=64.
+    if [[ "$TAG" =~ $INTERP_VALIDITY_TAGS_REGEX ]]; then
+        echo ""
+        echo "--- Protocol H: Interpolation Validity (RQ7) ---"
+        python -m analysis.interpolation_validity \
+            --checkpoint "$CKPT_DIR" \
+            --checkpoint-file "$CKPT_FILE" \
+            --workspace "$WORKSPACE" \
+            --output-dir "$TAG_RUN_DIR" \
+            --seed "$SEED" \
+            --clone-size "$INTERP_CLONE_SIZE" \
+            --n-permutations "$INTERP_N_PERMUTATIONS"
+
+        echo "  Protocol H outputs:"
+        echo "    $TAG_RUN_DIR/interpolation_validity_results.json"
+        echo "    $TAG_RUN_DIR/interpolation_validity_per_layer.png"
+    else
+        echo ""
+        echo "  Skipping Protocol H for $TAG (not in §1.5 Matrix H row)"
+    fi
+
+    # --- Protocol I: Depth-Embedding 8-Condition Freeze Ablation (RQ8) ---
+    # §1.5 Matrix row "I: Depth-Emb Freeze" runs on C3 only (LN-CoTFormer
+    # 60k -- the only checkpoint where the depth_embedding entry has been
+    # learned to convergence). The 8 conditions are run sequentially; each
+    # invocation specifies one (mode, target) pair and emits its own
+    # per-condition perplexity + bootstrap CI. Aggregate ANOVA is computed
+    # CPU-side from the per-condition JSON artefacts. ~21 min L4 across
+    # all 8 conditions per docs/extend-notes.md §1.8.
+    if [[ "$TAG" =~ $DEPTH_FREEZE_TAGS_REGEX ]]; then
+        echo ""
+        echo "--- Protocol I: Depth-Embedding Freeze (RQ8) ---"
+        for condition_entry in "${DEPTH_FREEZE_CONDITIONS[@]}"; do
+            IFS='|' read -r FREEZE_MODE_RAW FREEZE_KIND FREEZE_TARGET <<< "$condition_entry"
+            COND_DIR="$TAG_RUN_DIR/depth_emb_freeze/${FREEZE_MODE_RAW}_${FREEZE_KIND}_t${FREEZE_TARGET}"
+            mkdir -p "$COND_DIR"
+            # Map FREEZE_MODE_RAW (freeze | unfreeze) onto the protocol's
+            # --freeze-active flag so each row of DEPTH_FREEZE_CONDITIONS
+            # maps to a distinct intervention. Without this, the unfreeze
+            # rows collapse onto the freeze rows (8 conditions -> 6).
+            if [ "$FREEZE_MODE_RAW" = "freeze" ]; then
+                FREEZE_ACTIVE=true
+            else
+                FREEZE_ACTIVE=false
+            fi
+            echo "    -> condition: ${FREEZE_MODE_RAW} / ${FREEZE_KIND} / target=${FREEZE_TARGET}"
+            python -m analysis.depth_emb_freeze \
+                --checkpoint "$CKPT_DIR" \
+                --checkpoint-file "$CKPT_FILE" \
+                --workspace "$WORKSPACE" \
+                --output-dir "$COND_DIR" \
+                --seed "$SEED" \
+                --freeze-mode "$FREEZE_KIND" \
+                --freeze-target "$FREEZE_TARGET" \
+                --freeze-active "$FREEZE_ACTIVE" \
+                --n-bootstrap "$DEPTH_FREEZE_N_BOOTSTRAP"
+        done
+
+        echo "  Protocol I outputs (per condition):"
+        echo "    $TAG_RUN_DIR/depth_emb_freeze/<mode>_<kind>_t<idx>/depth_emb_freeze_results.json"
+    else
+        echo ""
+        echo "  Skipping Protocol I for $TAG (not in §1.5 Matrix I row)"
+    fi
+
 done  # end VERSION LOOP
+
+# ========================= PROTOCOL D-CALIBRATION =============================
+# Substrate-specific (not per-checkpoint inside the VERSIONS loop). Runs the
+# Tier 1 (GPT-2-large) + Tier 2 (ADM C5) forward passes per the three-tier
+# substrate ladder in docs/extend-notes.md §1.3. Each tier writes its own
+# metrics.csv + spearman.json + classifier.json + figure.png to a tier-
+# specific subdir of $RUN_DIR/d_cal/. The CPU stage (job-cpu.sh) consumes
+# these artefacts in its 4-gate verdict aggregation. Tier 3 is contingent
+# per the protocol docstring and is NOT wired here.
+DCAL_RUN_DIR="$RUN_DIR/d_cal"
+mkdir -p "$DCAL_RUN_DIR/tier1" "$DCAL_RUN_DIR/tier2"
+
+# Resolve Tier 2 substrate path from VERSIONS (single source of truth).
+DCAL_TIER2_CKPT_DIR=""
+DCAL_TIER2_CKPT_FILE=""
+for version_entry in "${VERSIONS[@]}"; do
+    IFS='|' read -r v_tag v_dir v_file <<< "$version_entry"
+    if [ "$v_tag" = "$DCAL_TIER2_TAG" ]; then
+        DCAL_TIER2_CKPT_DIR="$v_dir"
+        DCAL_TIER2_CKPT_FILE="$v_file"
+        break
+    fi
+done
+if [ -z "$DCAL_TIER2_CKPT_DIR" ]; then
+    echo "ERROR: Tier 2 substrate '$DCAL_TIER2_TAG' not found in VERSIONS; D-cal cannot run."
+    exit 1
+fi
+
+echo ""
+echo "###################################################################"
+echo "   Protocol D-calibration (RQ5)"
+echo "###################################################################"
+
+echo ""
+echo "--- D-calibration Tier 1: $DCAL_TIER1_CKPT (GPT-2-large) ---"
+# Tier 1 module-path is model.transformer.h (the GPT-2 layer stack);
+# Tiers 2 and 3 use model.transformer.h_mid per the protocol docstring.
+python -m analysis.calibration.entropy_calibration \
+    --ckpt "$DCAL_TIER1_CKPT" \
+    --tier 1 \
+    --n-per-condition "$DCAL_N_PER_CONDITION" \
+    --seed "$SEED" \
+    --out "$DCAL_RUN_DIR/tier1" \
+    --module-path model.transformer.h
+
+echo "  Tier 1 outputs:"
+echo "    $DCAL_RUN_DIR/tier1/metrics.csv"
+echo "    $DCAL_RUN_DIR/tier1/spearman.json"
+echo "    $DCAL_RUN_DIR/tier1/classifier.json"
+echo "    $DCAL_RUN_DIR/tier1/figure.png"
+
+echo ""
+echo "--- D-calibration Tier 2: $DCAL_TIER2_TAG (ADM C5) ---"
+python -m analysis.calibration.entropy_calibration \
+    --ckpt "$DCAL_TIER2_CKPT_DIR/$DCAL_TIER2_CKPT_FILE" \
+    --tier 2 \
+    --n-per-condition "$DCAL_N_PER_CONDITION" \
+    --seed "$SEED" \
+    --out "$DCAL_RUN_DIR/tier2" \
+    --module-path model.transformer.h_mid
+
+echo "  Tier 2 outputs:"
+echo "    $DCAL_RUN_DIR/tier2/metrics.csv"
+echo "    $DCAL_RUN_DIR/tier2/spearman.json"
+echo "    $DCAL_RUN_DIR/tier2/classifier.json"
+echo "    $DCAL_RUN_DIR/tier2/figure.png"
+
+echo ""
+echo "  D-cal aggregation (4-gate verdict) runs CPU-side in job-cpu.sh."
+echo "  Tier 3 is contingent per protocol docstring; not wired."
 
 # ========================= SUMMARY ==========================================
 echo ""
@@ -327,5 +526,10 @@ for version_entry in "${VERSIONS[@]}"; do
     echo "     (+ attn_weights_mid_l<L>_r<R>.npy from Protocol C capture)"
 done
 echo ""
-echo " Next step: submit job-cpu.sh for Tuned Lens + Protocol B/E/F/G-weight + Protocol D"
+echo " D-calibration substrate outputs (not per-checkpoint):"
+echo "   $RUN_DIR/d_cal/tier1/  (GPT-2-large)"
+echo "   $RUN_DIR/d_cal/tier2/  (ADM C5)"
+echo ""
+echo " Next step: submit job-cpu.sh for Tuned Lens + Protocol B/E/F/G-weight"
+echo " + Protocol D (router) + D-cal aggregation."
 echo "========================================="

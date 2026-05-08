@@ -11,13 +11,26 @@
 ################################################################################
 # KV Cache Compressibility Analysis — iridis/kv-analysis-lncot+adm
 #
-# Runs analyze_kv_compression.py on both LN-CoTFormer and ADM checkpoints to
-# inform MLA rank selection (Phase 4). Analyses both models at 40k and 60k
-# training steps where available.
+# Runs Protocol G (Type A weight-level SVD + Type B activation-level SVD +
+# KV-CoRE NER) on the four exploratory LN-CoTFormer / ADM checkpoints that
+# pre-date the formal §1.5 Analysis Matrix. The four checkpoints below
+# were the original MLA-rank-selection inputs (Phase 4); two of them
+# (lncot_40k = c2, adm_v2_40k) are NOT covered by the analyze-lncot+adm
+# package's KV_RANK_TAGS_REGEX (which runs Protocol G only on c1, c3, c5),
+# so this package is retained -- not redundant -- to keep their KV-rank
+# coverage.
+#
+# Implementation: invokes `python -m analysis.kv_rank` (Protocol G; covers
+# Type A + Type B + KV-CoRE NER). The previous entry point
+# analyze_kv_compression.py was absorbed into analysis.kv_rank during the
+# mvp-b orch wave and no longer exists on disk.
 #
 # Per checkpoint:
-#   Type A (weight-level SVD): fast, no data needed.
-#   Type B (activation-level SVD): requires GPU + data.
+#   Type A (weight-level SVD): fast, no data needed (CPU-only).
+#   Type B (activation-level SVD): requires GPU + data; --capture-kv
+#                                  triggers the workspace populate when
+#                                  the kv_mid_l<L>_r<R>.npy files are absent.
+#   KV-CoRE NER: emitted alongside Type B per Chen et al. 2026 [8].
 #
 # Usage:
 #   cd ~/CoTFormer && bash iridis/kv-analysis-lncot+adm/job.sh
@@ -33,6 +46,8 @@
 
 TARGET_RANK=192
 N_BATCHES=10
+SEQ_LEN=256
+BATCH_SIZE=8
 OUTPUT_DIR="/scratch/ab3u21/exps/kv-analysis"
 
 # Checkpoints to analyse. Format: "tag|dir|checkpoint_file"
@@ -146,30 +161,40 @@ for entry in "${CHECKPOINTS[@]}"; do
         continue
     fi
 
+    # analysis.kv_rank writes outputs to --output-dir directly; we point
+    # it at a per-tag subdir so the parallel runs don't collide on shared
+    # filenames. Workspace lives on /scratch like the analyze-lncot+adm
+    # package's convention, so a later --capture-kv re-run finds the
+    # cached kv_mid_l<L>_r<R>.npy and skips re-capture.
+    TAG_OUTPUT_DIR="$OUTPUT_DIR/$tag"
+    TAG_WORKSPACE="/scratch/$USER/analysis_workspace/kv_legacy_$tag"
+    mkdir -p "$TAG_OUTPUT_DIR" "$TAG_WORKSPACE"
+
     ANALYSIS_ARGS=(
         --checkpoint "$ckpt_dir"
         --checkpoint-file "$ckpt_file"
+        --workspace "$TAG_WORKSPACE"
+        --output-dir "$TAG_OUTPUT_DIR"
         --target-rank "$TARGET_RANK"
+        --seed 2357
     )
 
     if [ "$SKIP_ACTIVATIONS" -eq 0 ]; then
         ANALYSIS_ARGS+=(
-            --compute-activations
-            --data_dir "$DATA_DIR"
-            --n-batches "$N_BATCHES"
+            --capture-kv
+            --data-dir "$DATA_DIR"
+            --max-tokens $((N_BATCHES * SEQ_LEN * BATCH_SIZE))
+            --batch-size "$BATCH_SIZE"
+            --seq-length "$SEQ_LEN"
         )
+    else
+        ANALYSIS_ARGS+=( --skip-activations )
     fi
 
-    python analyze_kv_compression.py "${ANALYSIS_ARGS[@]}"
+    python -m analysis.kv_rank "${ANALYSIS_ARGS[@]}"
 
-    # Copy outputs to central output dir with tag prefix
-    for f in "$ckpt_dir"/kv_compression_*.{json,png}; do
-        if [ -f "$f" ]; then
-            base=$(basename "$f")
-            cp "$f" "$OUTPUT_DIR/${tag}_${base}"
-            echo "  -> $OUTPUT_DIR/${tag}_${base}"
-        fi
-    done
+    echo "  -> $TAG_OUTPUT_DIR/kv_rank_results.json"
+    echo "  -> $TAG_OUTPUT_DIR/kv_rank_plots.png"
 
     ANALYSED=$((ANALYSED + 1))
 done
