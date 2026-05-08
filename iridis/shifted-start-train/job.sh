@@ -56,7 +56,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
         --error="$RUN_DIR/slurm_%j.err" \
         --mail-type=BEGIN,END,FAIL \
         --mail-user="$NOTIFY_EMAIL" \
-        --export=ALL,REPO_DIR="$REPO_DIR" \
+        --export=ALL,REPO_DIR="$REPO_DIR",RUN_DIR="$RUN_DIR" \
         "$0" "$@"
 fi
 
@@ -70,6 +70,17 @@ if [ -z "$REPO_DIR" ]; then
 fi
 
 source "$REPO_DIR/iridis/env.sh"
+
+if [ -z "$RUN_DIR" ]; then
+    RUN_DIR=$(job_output_dir)
+fi
+mkdir -p "$RUN_DIR"
+exec > >(tee -a "$RUN_DIR/output.log") 2> >(tee -a "$RUN_DIR/error.log" >&2)
+
+die() {
+    printf 'ERROR: %s\n' "$*" >&2
+    exit 1
+}
 
 EXPS_DIR="/scratch/ab3u21/exps"
 SHIFTED_DATA_DIR="$DATA_DIR/rasp_primitives/$TASK"
@@ -98,6 +109,7 @@ echo " Iterations:    $ITERATIONS"
 echo " Eff. BS:       $((BATCH_SIZE * ACC_STEPS))"
 echo " Checkpoint:    every $CKPT_FREQ steps -> $EXPS_DIR"
 echo " Data dir:      $SHIFTED_DATA_DIR"
+echo " Run dir:       $RUN_DIR"
 echo " Started:       $(date)"
 echo "========================================="
 
@@ -108,9 +120,9 @@ echo ""
 
 for split in train val ood_test; do
     if [ ! -f "$SHIFTED_DATA_DIR/$split.txt" ]; then
-        echo "ERROR: Missing shifted-start split: $SHIFTED_DATA_DIR/$split.txt"
-        echo "  Run: bash iridis/shifted-start-data-prep/job.sh"
-        exit 1
+        echo "Missing split: $SHIFTED_DATA_DIR/$split.txt" >&2
+        echo "Suggested fix: bash iridis/shifted-start-data-prep/job.sh" >&2
+        die "Missing shifted-start split check failed."
     fi
 done
 
