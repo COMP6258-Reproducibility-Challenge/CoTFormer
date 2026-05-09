@@ -213,6 +213,91 @@ def sanitize_args_for_json(args):
     return result
 
 
+def to_loggable_float(value):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            return None
+        return float(value.detach().cpu().float().item())
+    if isinstance(value, np.ndarray):
+        if value.size != 1:
+            return None
+        return float(value.item())
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def add_eval_stats_to_wandb_logs(logs, eval_stats, prefix="eval"):
+    for split, split_stats in eval_stats.items():
+        for metric, value in split_stats.items():
+            scalar = to_loggable_float(value)
+            if scalar is not None:
+                logs[f"{prefix}/{split}/{metric}"] = scalar
+
+
+def add_fixed_cot_diagnostics_to_wandb_logs(logs, raw_model, diag_outputs):
+    if hasattr(raw_model, "backward_metrics"):
+        for key, value in raw_model.backward_metrics.items():
+            scalar = to_loggable_float(value)
+            if scalar is not None:
+                logs[f"diag_grad/{key}"] = scalar
+        raw_model.backward_metrics.clear()
+
+    if hasattr(raw_model, "forward_metrics"):
+        for key, value in raw_model.forward_metrics.items():
+            scalar = to_loggable_float(value)
+            if scalar is not None:
+                logs[f"diag_step/{key}"] = scalar
+        raw_model.forward_metrics.clear()
+
+    if not isinstance(diag_outputs, dict):
+        return
+
+    for output_key, log_key in [
+        ("sim_of_xs", "diag/boundary_sim"),
+        ("var_into", "diag/var_into"),
+        ("var_outof", "diag/var_outof"),
+    ]:
+        scalar = to_loggable_float(diag_outputs.get(output_key))
+        if scalar is not None:
+            logs[log_key] = scalar
+
+    d_metrics = diag_outputs.get("diag_metrics") or {}
+    if "macro_rep_entropy" in d_metrics:
+        logs["diag_macro/repeat_entropy"] = float(d_metrics["macro_rep_entropy"])
+
+    if "macro_budget" in d_metrics:
+        macro_budget = d_metrics["macro_budget"]
+        num_repeats = len(macro_budget)
+        for repeat_idx in range(num_repeats):
+            loop_num = repeat_idx + 1
+            logs[f"diag_macro/budget_loop_{loop_num}"] = float(macro_budget[repeat_idx])
+            if "macro_in_entropy" in d_metrics:
+                logs[f"diag_macro/within_entropy_loop_{loop_num}"] = float(
+                    d_metrics["macro_in_entropy"][repeat_idx]
+                )
+            if "macro_same_pos" in d_metrics:
+                logs[f"diag_macro/same_pos_budget_loop_{loop_num}"] = float(
+                    d_metrics["macro_same_pos"][repeat_idx]
+                )
+
+    if "head_rep_entropy" in d_metrics and "head_budget" in d_metrics:
+        head_rep_entropy = np.asarray(d_metrics["head_rep_entropy"])
+        head_budget = np.asarray(d_metrics["head_budget"])
+        if head_budget.ndim == 2:
+            for head_idx in [0, 5, 11]:
+                if head_idx >= len(head_rep_entropy):
+                    continue
+                logs[f"diag_head_{head_idx}/repeat_entropy"] = float(head_rep_entropy[head_idx])
+                for repeat_idx in range(head_budget.shape[1]):
+                    logs[f"diag_head_{head_idx}/budget_loop_{repeat_idx + 1}"] = float(
+                        head_budget[head_idx, repeat_idx]
+                    )
+
+
 def best_checkpoint_name(split, metric):
     safe_split = split.replace("/", "_")
     safe_metric = metric.replace("/", "_")
@@ -402,8 +487,11 @@ def main(args):
     raw_model = distributed_backend.get_raw_model(model)
     itr = load_checkpoint_if_needed(args, raw_model, optimizer, scheduler, ckpt_path, args.device)
     print_master(distributed_backend, f"\nTraining shifted-start CoTFormer model={args.model}\n{vars(args)}\n")
+    accepts_log_metrics = "log_metrics" in inspect.signature(raw_model.forward).parameters
 
     batch_iter = infinite_batches(train_loader)
+    diag_split = args.ib_eval_splits[0] if args.ib_eval_splits else None
+    diag_iter = iter(eval_loaders[diag_split]) if diag_split is not None else None
     stats = {"eval": {}, "train_loss": []}
     save_every = args.ib_save_every if args.ib_save_every is not None else args.eval_freq
     log_every = args.ib_log_every if args.ib_log_every is not None else max(1, min(100, args.eval_freq))
@@ -454,6 +542,41 @@ def main(args):
         write_best_info(ckpt_path, best_info)
         print(json.dumps({"step": step, "best_checkpoint": best_info}, indent=2))
 
+        if getattr(args, "wandb", False):
+            wandb.log(
+                {
+                    "iter": step,
+                    "best/step": int(step),
+                    f"best/{args.ib_best_split}/{args.ib_best_metric}": float(value),
+                },
+                step=step,
+            )
+
+    def next_diag_batch():
+        nonlocal diag_iter
+        if diag_iter is None:
+            return None
+        try:
+            return next(diag_iter)
+        except StopIteration:
+            diag_iter = iter(eval_loaders[diag_split])
+            return next(diag_iter)
+
+    def collect_diagnostic_outputs():
+        diag_batch = next_diag_batch()
+        if diag_batch is None:
+            return None
+
+        was_training = raw_model.training
+        raw_model.eval()
+        inputs = diag_batch["input_id"].to(args.device, non_blocking=pin_memory)
+        labels = diag_batch["label"].to(args.device, non_blocking=pin_memory)
+        with torch.no_grad(), type_ctx:
+            outputs = raw_model(inputs, targets=labels, get_logits=False)
+        if was_training:
+            raw_model.train()
+        return outputs
+
     for step in range(itr, args.iterations):
         if step % args.eval_freq == 0 and distributed_backend.is_master_process():
             eval_stats = evaluate_splits(
@@ -467,23 +590,43 @@ def main(args):
             stats["eval"][str(step)] = eval_stats
             print(json.dumps({"step": step, "eval": eval_stats}, indent=2))
             maybe_update_best(eval_stats, step)
+            if getattr(args, "wandb", False):
+                logs = {"iter": step}
+                add_eval_stats_to_wandb_logs(logs, eval_stats)
+                diag_outputs = collect_diagnostic_outputs()
+                add_fixed_cot_diagnostics_to_wandb_logs(logs, raw_model, diag_outputs)
+                wandb.log(logs, step=step)
 
         model.train()
         optimizer.zero_grad(set_to_none=True)
         total_loss = 0.0
-        for _ in range(args.acc_steps):
+        for microstep_idx in range(args.acc_steps):
             batch = next(batch_iter)
             inputs = batch["input_id"].to(args.device, non_blocking=pin_memory)
             labels = batch["label"].to(args.device, non_blocking=pin_memory)
+            is_diagnostic_step = (
+                accepts_log_metrics
+                and (step + 1) % args.eval_freq == 0
+                and microstep_idx == args.acc_steps - 1
+            )
+            forward_kwargs = {
+                "targets": labels,
+                "get_logits": True,
+            }
+            if is_diagnostic_step:
+                forward_kwargs["log_metrics"] = True
             with type_ctx:
-                outputs = model(inputs, targets=labels, get_logits=True)
+                outputs = model(inputs, **forward_kwargs)
             loss, _ = unpack_model_outputs(outputs)
             (loss / args.acc_steps).backward()
             total_loss += float(loss.detach().item())
 
         grad_clip = getattr(args, "grad_clip", None)
         if grad_clip is not None and grad_clip > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        else:
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float("inf"))
+        grad_norm = float(grad_norm.detach().cpu().item() if isinstance(grad_norm, torch.Tensor) else grad_norm)
         optimizer.step()
         if scheduler is not None:
             scheduler.step()
@@ -492,6 +635,16 @@ def main(args):
         stats["train_loss"].append({"step": step + 1, "loss": mean_loss})
         if distributed_backend.is_master_process() and (step + 1) % log_every == 0:
             print(json.dumps({"step": step + 1, "train_loss": mean_loss}))
+            if getattr(args, "wandb", False):
+                current_lr = scheduler.get_last_lr()[0] if scheduler is not None else args.lr
+                logs = {
+                    "iter": step + 1,
+                    "train/loss": mean_loss,
+                    "train/grad_norm": grad_norm,
+                    "lr": current_lr,
+                }
+                add_fixed_cot_diagnostics_to_wandb_logs(logs, raw_model, None)
+                wandb.log(logs, step=step + 1)
         if distributed_backend.is_master_process() and (step + 1) % save_every == 0:
             save_checkpoint(model, optimizer, scheduler, step + 1, ckpt_path, distributed_backend)
 
@@ -506,6 +659,16 @@ def main(args):
         )
         stats["eval"][str(args.iterations)] = eval_stats
         maybe_update_best(eval_stats, args.iterations)
+        if getattr(args, "wandb", False):
+            logs = {"iter": args.iterations}
+            add_eval_stats_to_wandb_logs(logs, eval_stats)
+            diag_outputs = collect_diagnostic_outputs()
+            add_fixed_cot_diagnostics_to_wandb_logs(logs, raw_model, diag_outputs)
+            for split, split_stats in eval_stats.items():
+                for metric in ["loss", "acc", "counting_acc", "last_acc", "unseen_len_acc"]:
+                    if metric in split_stats:
+                        logs[f"final/{split}/{metric}"] = float(split_stats[metric])
+            wandb.log(logs, step=args.iterations)
         save_checkpoint(model, optimizer, scheduler, args.iterations, ckpt_path, distributed_backend)
         if best_info is not None:
             stats["best"] = best_info
@@ -538,6 +701,14 @@ def main(args):
                     type_ctx,
                 )
                 stats["best_eval"] = big_eval_stats
+                if getattr(args, "wandb", False):
+                    logs = {"iter": args.iterations}
+                    add_eval_stats_to_wandb_logs(logs, big_eval_stats, prefix="best_eval")
+                    logs["best/selected_step"] = int(best_info["step"])
+                    logs[f"best_eval/selected/{best_info['split']}/{best_info['metric']}"] = float(
+                        best_info["value"]
+                    )
+                    wandb.log(logs, step=args.iterations)
                 with open(f"{ckpt_path}/best_eval.json", "w", encoding="utf-8") as handle:
                     json.dump(
                         {
