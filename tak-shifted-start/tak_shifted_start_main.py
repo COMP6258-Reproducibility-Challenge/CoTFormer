@@ -40,6 +40,11 @@ def get_args():
     parser.add_argument("--ib_eval_max_batches", type=int, default=None)
     parser.add_argument("--ib_save_every", type=int, default=None)
     parser.add_argument("--ib_log_every", type=int, default=None)
+    parser.add_argument("--ib_best_split", default="ood_test")
+    parser.add_argument("--ib_best_metric", default="acc")
+    parser.add_argument("--ib_best_mode", choices=["max", "min"], default="max")
+    parser.add_argument("--ib_big_eval_splits", nargs="+", default=None)
+    parser.add_argument("--ib_big_eval_max_batches", type=int, default=None)
 
     args, rem_args = parser.parse_known_args()
     return config.parse_args_with_format(
@@ -208,7 +213,46 @@ def sanitize_args_for_json(args):
     return result
 
 
-def save_checkpoint(model, optimizer, scheduler, itr, ckpt_path, distributed_backend):
+def best_checkpoint_name(split, metric):
+    safe_split = split.replace("/", "_")
+    safe_metric = metric.replace("/", "_")
+    return f"best_{safe_split}_{safe_metric}.pt"
+
+
+def load_best_info(ckpt_path):
+    path = os.path.join(ckpt_path, "best_metrics.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def write_best_info(ckpt_path, best_info):
+    with open(os.path.join(ckpt_path, "best_metrics.json"), "w", encoding="utf-8") as handle:
+        json.dump(best_info, handle, indent=2)
+
+
+def get_eval_metric(eval_stats, split, metric):
+    split_stats = eval_stats.get(split)
+    if split_stats is None:
+        return None
+    value = split_stats.get(metric)
+    if value is None:
+        return None
+    return float(value)
+
+
+def is_better_metric(value, best_value, mode):
+    if best_value is None:
+        return True
+    if mode == "max":
+        return value > best_value
+    if mode == "min":
+        return value < best_value
+    raise ValueError(f"Unsupported best metric mode: {mode}")
+
+
+def save_checkpoint(model, optimizer, scheduler, itr, ckpt_path, distributed_backend, filename=None):
     if not distributed_backend.is_master_process():
         return
     checkpoint = {
@@ -223,7 +267,8 @@ def save_checkpoint(model, optimizer, scheduler, itr, ckpt_path, distributed_bac
         checkpoint["gpu_rng_state"] = torch.cuda.get_rng_state()
     if scheduler is not None:
         checkpoint["scheduler"] = scheduler.state_dict()
-    torch.save(checkpoint, os.path.join(ckpt_path, f"ckpt_{itr}.pt"))
+    checkpoint_name = filename or f"ckpt_{itr}.pt"
+    torch.save(checkpoint, os.path.join(ckpt_path, checkpoint_name))
 
 
 def evaluate_splits(model, eval_loaders, device, max_seen_len, max_batches, ctx):
@@ -237,6 +282,35 @@ def evaluate_splits(model, eval_loaders, device, max_seen_len, max_batches, ctx)
             ctx=ctx,
         )
         for split, dataloader in eval_loaders.items()
+    }
+
+
+def make_eval_loaders_for_splits(
+    split_names,
+    data_root,
+    spec,
+    sequence_length,
+    batch_size,
+    seed,
+    num_workers,
+    pin_memory,
+):
+    datasets = {
+        split: load_counting_split(data_root, spec.name, split)
+        for split in split_names
+    }
+    return {
+        split: make_loader(
+            dataset,
+            spec=spec,
+            sequence_length=sequence_length,
+            batch_size=batch_size,
+            shuffle=False,
+            seed=seed,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+        )
+        for split, dataset in datasets.items()
     }
 
 
@@ -333,6 +407,52 @@ def main(args):
     stats = {"eval": {}, "train_loss": []}
     save_every = args.ib_save_every if args.ib_save_every is not None else args.eval_freq
     log_every = args.ib_log_every if args.ib_log_every is not None else max(1, min(100, args.eval_freq))
+    best_filename = best_checkpoint_name(args.ib_best_split, args.ib_best_metric)
+    best_info = load_best_info(ckpt_path)
+    if best_info is not None and (
+        best_info.get("split") != args.ib_best_split
+        or best_info.get("metric") != args.ib_best_metric
+        or best_info.get("mode") != args.ib_best_mode
+    ):
+        best_info = None
+    best_value = None if best_info is None else float(best_info["value"])
+
+    def maybe_update_best(eval_stats, step):
+        nonlocal best_info, best_value
+
+        value = get_eval_metric(eval_stats, args.ib_best_split, args.ib_best_metric)
+        if value is None:
+            if step == 0:
+                print_master(
+                    distributed_backend,
+                    "WARNING: cannot track best checkpoint because "
+                    f"{args.ib_best_split}.{args.ib_best_metric} is not present in eval stats.",
+                )
+            return
+
+        if not is_better_metric(value, best_value, args.ib_best_mode):
+            return
+
+        best_value = value
+        best_info = {
+            "step": int(step),
+            "split": args.ib_best_split,
+            "metric": args.ib_best_metric,
+            "mode": args.ib_best_mode,
+            "value": float(value),
+            "checkpoint": best_filename,
+        }
+        save_checkpoint(
+            model,
+            optimizer,
+            scheduler,
+            step,
+            ckpt_path,
+            distributed_backend,
+            filename=best_filename,
+        )
+        write_best_info(ckpt_path, best_info)
+        print(json.dumps({"step": step, "best_checkpoint": best_info}, indent=2))
 
     for step in range(itr, args.iterations):
         if step % args.eval_freq == 0 and distributed_backend.is_master_process():
@@ -346,6 +466,7 @@ def main(args):
             )
             stats["eval"][str(step)] = eval_stats
             print(json.dumps({"step": step, "eval": eval_stats}, indent=2))
+            maybe_update_best(eval_stats, step)
 
         model.train()
         optimizer.zero_grad(set_to_none=True)
@@ -384,7 +505,50 @@ def main(args):
             type_ctx,
         )
         stats["eval"][str(args.iterations)] = eval_stats
+        maybe_update_best(eval_stats, args.iterations)
         save_checkpoint(model, optimizer, scheduler, args.iterations, ckpt_path, distributed_backend)
+        if best_info is not None:
+            stats["best"] = best_info
+        if args.ib_big_eval_splits is not None:
+            if best_info is None:
+                print(
+                    "WARNING: skipping big eval because no best checkpoint was selected. "
+                    f"Make sure {args.ib_best_split} is included in --ib_eval_splits."
+                )
+            else:
+                best_checkpoint_path = os.path.join(ckpt_path, best_info["checkpoint"])
+                checkpoint = torch.load(best_checkpoint_path, map_location=args.device)
+                raw_model.load_state_dict(checkpoint["model"], strict=True)
+                big_eval_loaders = make_eval_loaders_for_splits(
+                    args.ib_big_eval_splits,
+                    data_root=data_root,
+                    spec=spec,
+                    sequence_length=args.sequence_length,
+                    batch_size=eval_batch_size,
+                    seed=seed,
+                    num_workers=args.ib_num_workers,
+                    pin_memory=pin_memory,
+                )
+                big_eval_stats = evaluate_splits(
+                    raw_model,
+                    big_eval_loaders,
+                    args.device,
+                    spec.max_seen_len,
+                    args.ib_big_eval_max_batches,
+                    type_ctx,
+                )
+                stats["best_eval"] = big_eval_stats
+                with open(f"{ckpt_path}/best_eval.json", "w", encoding="utf-8") as handle:
+                    json.dump(
+                        {
+                            "best": best_info,
+                            "eval": big_eval_stats,
+                            "args": sanitize_args_for_json(args),
+                        },
+                        handle,
+                        indent=2,
+                    )
+                print(json.dumps({"best": best_info, "best_eval": big_eval_stats}, indent=2))
         stats["args"] = sanitize_args_for_json(args)
         with open(f"{ckpt_path}/summary.json", "w", encoding="utf-8") as handle:
             json.dump(stats, handle, indent=2)

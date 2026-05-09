@@ -31,6 +31,10 @@ CKPT_FREQ=20
 EVAL_FREQ=10
 TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
 EVAL_SPLITS="${EVAL_SPLITS:-val ood_test}"
+BEST_SPLIT="${BEST_SPLIT:-ood_test}"
+BEST_METRIC="${BEST_METRIC:-acc}"
+BIG_EVAL_SPLITS="${BIG_EVAL_SPLITS:-val val_var_len ood_test ood_test_sampled ood_test_grid_ltmax ood_test_max_len ood_test_grid}"
+BIG_EVAL_MAX_BATCHES="${BIG_EVAL_MAX_BATCHES:-}"
 
 # ========================= END CONFIGURATION ================================
 
@@ -46,6 +50,8 @@ if [ -z "$SLURM_JOB_ID" ]; then
     echo "  Task:      $TASK"
     echo "  Train:     $TRAIN_SPLIT"
     echo "  Eval:      $EVAL_SPLITS"
+    echo "  Best:      $BEST_SPLIT.$BEST_METRIC"
+    echo "  Big eval:  $BIG_EVAL_SPLITS"
     echo "  Layers:    $N_LAYER"
     echo "  Steps:     $ITERATIONS"
     echo "  Eff. BS:   $((BATCH_SIZE * ACC_STEPS))"
@@ -105,6 +111,8 @@ echo " Job ID:        $SLURM_JOB_ID"
 echo " Task:          $TASK"
 echo " Train split:   $TRAIN_SPLIT"
 echo " Eval splits:   $EVAL_SPLITS"
+echo " Best metric:   $BEST_SPLIT.$BEST_METRIC"
+echo " Big eval:      $BIG_EVAL_SPLITS"
 echo " Model:         $MODEL_NAME"
 echo " Architecture:  ${N_LAYER}L"
 echo " Iterations:    $ITERATIONS"
@@ -120,7 +128,7 @@ echo "GPU Info:"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv,noheader
 echo ""
 
-for split in $TRAIN_SPLIT $EVAL_SPLITS; do
+for split in $TRAIN_SPLIT $EVAL_SPLITS $BIG_EVAL_SPLITS; do
     if [ ! -f "$SHIFTED_DATA_DIR/$split.txt" ]; then
         echo "Missing split: $SHIFTED_DATA_DIR/$split.txt" >&2
         echo "Suggested fix: bash iridis/tak-shifted-start-data-prep/job.sh" >&2
@@ -135,6 +143,14 @@ echo ""
 DATA_VARIANT_SUFFIX=""
 if [ "$TRAIN_SPLIT" != "train" ]; then
     DATA_VARIANT_SUFFIX="_${TRAIN_SPLIT}"
+fi
+
+BIG_EVAL_ARGS=()
+if [ -n "$BIG_EVAL_SPLITS" ]; then
+    BIG_EVAL_ARGS+=(--ib_big_eval_splits $BIG_EVAL_SPLITS)
+fi
+if [ -n "$BIG_EVAL_MAX_BATCHES" ]; then
+    BIG_EVAL_ARGS+=(--ib_big_eval_max_batches "$BIG_EVAL_MAX_BATCHES")
 fi
 
 TRAIN_ARGS=(
@@ -161,6 +177,9 @@ TRAIN_ARGS=(
     --ib_data_root "$DATA_DIR/rasp_primitives"
     --ib_train_split "$TRAIN_SPLIT"
     --ib_eval_splits $EVAL_SPLITS
+    --ib_best_split "$BEST_SPLIT"
+    --ib_best_metric "$BEST_METRIC"
+    "${BIG_EVAL_ARGS[@]}"
     --ib_save_every "$CKPT_FREQ"
     --ib_log_every 10
     --wandb
