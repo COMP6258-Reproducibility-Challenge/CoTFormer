@@ -10,7 +10,7 @@ import torch
 import config
 import distributed
 import models
-from IB_counting_data import (
+from tak_counting_data import (
     DEFAULT_SHIFTED_START_TASK,
     default_data_root,
     evaluate_counting_model,
@@ -18,7 +18,7 @@ from IB_counting_data import (
     load_counting_split,
     make_counting_dataloader,
 )
-from IB_shifted_start_main import apply_task_shape, coerce_seed
+from tak_shifted_start_main import apply_task_shape, coerce_seed
 
 
 def none_or_str(value):

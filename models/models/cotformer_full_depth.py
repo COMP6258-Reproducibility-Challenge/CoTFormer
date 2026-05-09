@@ -30,7 +30,7 @@ class InPlaceSetSlice(torch.autograd.Function):
             prev_length = last_slice.shape[dim]
         new_length = prev_length + x_val.shape[dim]
 
-        prefix_slice = [slice(None)] * dim 
+        prefix_slice = [slice(None)] * dim # for the first 'dim' dimensions we want to take everything
         full_tensor[prefix_slice + [slice(prev_length, new_length)]] = x_val
         ctx.prev_length = prev_length
         ctx.new_length = new_length

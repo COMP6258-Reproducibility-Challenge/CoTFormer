@@ -329,7 +329,7 @@ class GPTBase(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-   def forward(self, idx, targets=None, get_logits=False, use_cache=False, iter=None,log_metrics=False):
+    def forward(self, idx, targets=None, get_logits=False, use_cache=False, iter=None,log_metrics=False):
         device = idx.device
         b, t = idx.size()
         diag_metrics = {} # We will pack everything into a dict to keep it clean

@@ -12,10 +12,10 @@
 # Standard Transformer shifted-start counting baseline.
 #
 # Usage:
-#   cd ~/CoTFormer && bash iridis/shifted-start-base-train/job.sh
+#   cd ~/CoTFormer && bash iridis/tak-shifted-start-base-train/job.sh
 #
 # Requires:
-#   bash iridis/shifted-start-data-prep/job.sh
+#   bash iridis/tak-shifted-start-data-prep/job.sh
 ################################################################################
 
 # ========================= CONFIGURATION ====================================
@@ -91,7 +91,7 @@ eval "$(conda shell.bash hook)"
 conda activate "$CONDA_ENV_PREFIX"
 
 export WANDB_MODE=offline
-export PYTHONPATH="$REPO_DIR:$REPO_DIR/IB_shifted_Start:${PYTHONPATH:-}"
+export PYTHONPATH="$REPO_DIR:$REPO_DIR/tak-shifted-start:${PYTHONPATH:-}"
 
 cd "$REPO_DIR"
 
@@ -123,7 +123,7 @@ echo ""
 for split in $TRAIN_SPLIT $EVAL_SPLITS; do
     if [ ! -f "$SHIFTED_DATA_DIR/$split.txt" ]; then
         echo "Missing split: $SHIFTED_DATA_DIR/$split.txt" >&2
-        echo "Suggested fix: bash iridis/shifted-start-data-prep/job.sh" >&2
+        echo "Suggested fix: bash iridis/tak-shifted-start-data-prep/job.sh" >&2
         die "Missing shifted-start split check failed."
     fi
 done
@@ -178,11 +178,11 @@ if [ "$N_GPUS" -gt 1 ]; then
         --nproc_per_node="$N_GPUS" \
         --rdzv_backend=c10d \
         --rdzv_endpoint="${RDZV_HOST}:${RDZV_PORT}" \
-        IB_shifted_Start/IB_shifted_start_main.py "${TRAIN_ARGS[@]}" \
+        tak-shifted-start/tak_shifted_start_main.py "${TRAIN_ARGS[@]}" \
         --distributed_backend nccl
 else
     echo "Launching single-GPU shifted-start training"
-    python IB_shifted_Start/IB_shifted_start_main.py "${TRAIN_ARGS[@]}"
+    python tak-shifted-start/tak_shifted_start_main.py "${TRAIN_ARGS[@]}"
 fi
 
 EXIT_CODE=$?
@@ -194,7 +194,7 @@ echo ""
 echo " Checkpoints: $EXPS_DIR/$TASK/$MODEL_NAME/"
 echo ""
 echo " If training incomplete, resubmit:"
-echo "   bash iridis/shifted-start-base-train/job.sh"
+echo "   bash iridis/tak-shifted-start-base-train/job.sh"
 echo ""
 echo " After training completes, sync WandB:"
 echo "   wandb sync $WANDB_DIR/<offline-run-*>"

@@ -10,6 +10,8 @@ EXTENDED_SPLITS = AUTHOR_SPLITS + [
     "train_var_len",
     "val_var_len",
     "ood_test_grid",
+    "ood_test_grid_ltmax",
+    "ood_test_max_len",
     "ood_test_sampled",
 ]
 
@@ -73,8 +75,9 @@ def iter_ood_examples(train_seq_len, test_seq_len):
 
 
 def iter_var_len_examples(train_seq_len, test_seq_len):
+    addon_range = range(test_seq_len - train_seq_len + 1)
     for count in range(1, train_seq_len + 1):
-        for addon in range(test_seq_len - count + 1):
+        for addon in addon_range:
             yield make_example(addon, count)
 
 
@@ -84,23 +87,55 @@ def iter_ood_grid_examples(train_seq_len, test_seq_len):
             yield make_example(addon, count)
 
 
+def iter_ood_grid_ltmax_examples(train_seq_len, test_seq_len):
+    for count in range(train_seq_len + 1, test_seq_len):
+        for addon in range(test_seq_len - count + 1):
+            yield make_example(addon, count)
+
+
+def iter_ood_max_len_examples(train_seq_len, test_seq_len):
+    del train_seq_len
+    yield make_example(0, test_seq_len)
+
+
 def iter_sampled_ood_grid_examples(train_seq_len, test_seq_len, sample_size, seed):
     if sample_size < 0:
         raise ValueError("--ood_sample_size must be non-negative.")
 
-    pairs = [
-        (addon, count)
+    rng = random.Random(seed)
+    pairs_by_count = {
+        count: [(addon, count) for addon in range(test_seq_len - count + 1)]
         for count in range(train_seq_len + 1, test_seq_len + 1)
-        for addon in range(test_seq_len - count + 1)
-    ]
-    if sample_size >= len(pairs):
-        selected_indices = range(len(pairs))
+    }
+    counts = list(pairs_by_count)
+    full_grid_size = sum(len(pairs) for pairs in pairs_by_count.values())
+    if sample_size >= full_grid_size:
+        selected_pairs = [
+            pair
+            for count in counts
+            for pair in pairs_by_count[count]
+        ]
     else:
-        rng = random.Random(seed)
-        selected_indices = sorted(rng.sample(range(len(pairs)), sample_size))
+        remaining_by_count = {}
+        for count, pairs in pairs_by_count.items():
+            shuffled = list(pairs)
+            rng.shuffle(shuffled)
+            remaining_by_count[count] = shuffled
 
-    for idx in selected_indices:
-        addon, count = pairs[idx]
+        selected_pairs = []
+        while len(selected_pairs) < sample_size:
+            made_progress = False
+            for count in counts:
+                if len(selected_pairs) >= sample_size:
+                    break
+                if remaining_by_count[count]:
+                    selected_pairs.append(remaining_by_count[count].pop())
+                    made_progress = True
+            if not made_progress:
+                break
+        selected_pairs.sort(key=lambda pair: (pair[1], pair[0]))
+
+    for addon, count in selected_pairs:
         yield make_example(addon, count)
 
 
@@ -126,6 +161,10 @@ def write_split_file(
         examples = iter_var_len_examples(train_seq_len, test_seq_len)
     elif split == "ood_test_grid":
         examples = iter_ood_grid_examples(train_seq_len, test_seq_len)
+    elif split == "ood_test_grid_ltmax":
+        examples = iter_ood_grid_ltmax_examples(train_seq_len, test_seq_len)
+    elif split == "ood_test_max_len":
+        examples = iter_ood_max_len_examples(train_seq_len, test_seq_len)
     elif split == "ood_test_sampled":
         examples = iter_sampled_ood_grid_examples(
             train_seq_len,
