@@ -31,6 +31,7 @@ CKPT_FREQ=20
 EVAL_FREQ=10
 TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
 EVAL_SPLITS="${EVAL_SPLITS:-val ood_test}"
+SEED="${SEED:-0}"
 BEST_SPLIT="${BEST_SPLIT:-ood_test}"
 BEST_METRIC="${BEST_METRIC:-acc}"
 BIG_EVAL_SPLITS="${BIG_EVAL_SPLITS:-val val_var_len ood_test ood_test_sampled ood_test_grid_ltmax ood_test_max_len ood_test_grid}"
@@ -50,6 +51,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
     echo "  Task:      $TASK"
     echo "  Train:     $TRAIN_SPLIT"
     echo "  Eval:      $EVAL_SPLITS"
+    echo "  Seed:      $SEED"
     echo "  Best:      $BEST_SPLIT.$BEST_METRIC"
     echo "  Big eval:  $BIG_EVAL_SPLITS"
     echo "  Layers:    $N_LAYER"
@@ -111,6 +113,7 @@ echo " Job ID:        $SLURM_JOB_ID"
 echo " Task:          $TASK"
 echo " Train split:   $TRAIN_SPLIT"
 echo " Eval splits:   $EVAL_SPLITS"
+echo " Seed:          $SEED"
 echo " Best metric:   $BEST_SPLIT.$BEST_METRIC"
 echo " Big eval:      $BIG_EVAL_SPLITS"
 echo " Model:         $MODEL_NAME"
@@ -169,9 +172,9 @@ TRAIN_ARGS=(
     --weight_decay 0.1
     --warmup_percent 0.2
     --eval_freq "$EVAL_FREQ"
-    --seed 0
+    --seed "$SEED"
     --results_base_folder "$EXPS_DIR"
-    --exp_name "shifted_start_${TASK}_base_${N_LAYER}layer${DATA_VARIANT_SUFFIX}_bs${BATCH_SIZE}x${ACC_STEPS}_seqlen256"
+    --exp_name "shifted_start_${TASK}_base_${N_LAYER}layer${DATA_VARIANT_SUFFIX}_bs${BATCH_SIZE}x${ACC_STEPS}_seqlen256_seed${SEED}"
     --use_pretrained auto
     --ib_task "$TASK"
     --ib_data_root "$DATA_DIR/rasp_primitives"

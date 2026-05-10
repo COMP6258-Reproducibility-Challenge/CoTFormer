@@ -298,6 +298,116 @@ def add_fixed_cot_diagnostics_to_wandb_logs(logs, raw_model, diag_outputs):
                     )
 
 
+def sorted_eval_items(stats):
+    return sorted(
+        ((int(step), eval_stats) for step, eval_stats in stats.get("eval", {}).items()),
+        key=lambda item: item[0],
+    )
+
+
+def make_wandb_line_series(xs, ys, keys, title, xname="step"):
+    if not xs or not ys or not keys:
+        return None
+    try:
+        return wandb.plot.line_series(xs=xs, ys=ys, keys=keys, title=title, xname=xname)
+    except Exception as exc:
+        print(f"WARNING: could not build WandB plot '{title}': {exc}")
+        return None
+
+
+def build_eval_metric_plot(stats, metric):
+    eval_items = sorted_eval_items(stats)
+    if not eval_items:
+        return None
+
+    steps = [step for step, _ in eval_items]
+    split_names = sorted({
+        split
+        for _, eval_stats in eval_items
+        for split, split_stats in eval_stats.items()
+        if metric in split_stats
+    })
+    series = []
+    keys = []
+    for split in split_names:
+        values = []
+        has_value = False
+        has_missing = False
+        for _, eval_stats in eval_items:
+            split_stats = eval_stats.get(split, {})
+            value = to_loggable_float(split_stats.get(metric))
+            if value is None or not np.isfinite(value) or (metric == "unseen_len_acc" and value < 0):
+                has_missing = True
+                continue
+            values.append(value)
+            has_value = True
+        if has_value and not has_missing:
+            keys.append(split)
+            series.append(values)
+
+    return make_wandb_line_series(
+        xs=steps,
+        ys=series,
+        keys=keys,
+        title=f"Shifted-start eval {metric}",
+    )
+
+
+def build_train_loss_plot(stats):
+    train_rows = stats.get("train_loss", [])
+    if not train_rows:
+        return None
+    return make_wandb_line_series(
+        xs=[row["step"] for row in train_rows],
+        ys=[[row["loss"] for row in train_rows]],
+        keys=["train_loss"],
+        title="Shifted-start train loss",
+    )
+
+
+def build_best_eval_bar_plot(best_eval_stats, metric):
+    if not best_eval_stats:
+        return None
+    table = wandb.Table(columns=["split", "value"])
+    has_value = False
+    for split, split_stats in best_eval_stats.items():
+        value = to_loggable_float(split_stats.get(metric))
+        if value is None or not np.isfinite(value) or (metric == "unseen_len_acc" and value < 0):
+            continue
+        table.add_data(split, value)
+        has_value = True
+    if not has_value:
+        return None
+    try:
+        return wandb.plot.bar(table, "split", "value", title=f"Best checkpoint {metric}")
+    except Exception as exc:
+        print(f"WARNING: could not build WandB best-eval plot '{metric}': {exc}")
+        return None
+
+
+def log_wandb_summary_plots(stats, best_eval_stats=None, step=None):
+    if not wandb.run:
+        return
+
+    logs = {}
+    train_loss_plot = build_train_loss_plot(stats)
+    if train_loss_plot is not None:
+        logs["plots/train_loss"] = train_loss_plot
+
+    for metric in ["loss", "acc", "counting_acc", "last_acc", "unseen_len_acc", "average_depth"]:
+        plot = build_eval_metric_plot(stats, metric)
+        if plot is not None:
+            logs[f"plots/eval/{metric}"] = plot
+
+    for metric in ["loss", "acc", "counting_acc", "last_acc", "unseen_len_acc", "average_depth"]:
+        plot = build_best_eval_bar_plot(best_eval_stats, metric)
+        if plot is not None:
+            logs[f"plots/best_eval/{metric}"] = plot
+
+    if logs:
+        wandb.log(logs, step=step)
+
+
 def best_checkpoint_name(split, metric):
     safe_split = split.replace("/", "_")
     safe_metric = metric.replace("/", "_")
@@ -672,6 +782,7 @@ def main(args):
         save_checkpoint(model, optimizer, scheduler, args.iterations, ckpt_path, distributed_backend)
         if best_info is not None:
             stats["best"] = best_info
+        final_best_eval_stats = None
         if args.ib_big_eval_splits is not None:
             if best_info is None:
                 print(
@@ -701,6 +812,7 @@ def main(args):
                     type_ctx,
                 )
                 stats["best_eval"] = big_eval_stats
+                final_best_eval_stats = big_eval_stats
                 if getattr(args, "wandb", False):
                     logs = {"iter": args.iterations}
                     add_eval_stats_to_wandb_logs(logs, big_eval_stats, prefix="best_eval")
@@ -720,6 +832,12 @@ def main(args):
                         indent=2,
                     )
                 print(json.dumps({"best": best_info, "best_eval": big_eval_stats}, indent=2))
+        if getattr(args, "wandb", False):
+            log_wandb_summary_plots(
+                stats,
+                best_eval_stats=final_best_eval_stats,
+                step=args.iterations,
+            )
         stats["args"] = sanitize_args_for_json(args)
         with open(f"{ckpt_path}/summary.json", "w", encoding="utf-8") as handle:
             json.dump(stats, handle, indent=2)
