@@ -51,7 +51,7 @@
 
 # ========================= CONFIGURATION ====================================
 
-CKPT_ROOT="/scratch/ab3u21/job-outputs/owt2/cotformer_full_depth"
+CKPT_ROOT="/scratch/ab3u21/exps/owt2/cotformer_full_depth"
 
 # Format: "<folder_name>"  -- the folder name encodes n_layer and n_repeat
 ABLATIONS=(
