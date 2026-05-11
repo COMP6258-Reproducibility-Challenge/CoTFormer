@@ -16,7 +16,11 @@
 
 TASK="counting_samesymbol_shiftedstart3__tr25_te200__"
 NUM_TRAIN=1000000
+<<<<<<< Updated upstream
 SPLITS="${SPLITS:-train_var_len val_var_len ood_test_grid_ltmax ood_test_max_len ood_test_grid ood_test_sampled}"
+=======
+SPLITS="${SPLITS:-train_var_len val_var_len ood_test_grid ood_test_sampled}"
+>>>>>>> Stashed changes
 OOD_SAMPLE_SIZE="${OOD_SAMPLE_SIZE:-2000}"
 SEED="${SEED:-0}"
 FORCE="${FORCE:-0}"
