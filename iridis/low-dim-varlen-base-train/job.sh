@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=shifted_start_cotformer
+#SBATCH --job-name=shifted_start_but
 #SBATCH --partition=ecsstudents_l4
 #SBATCH --account=ecsstudents
 #SBATCH --nodes=1
@@ -9,10 +9,10 @@
 #SBATCH --mem=8G
 #SBATCH --time=24:00:00
 ################################################################################
-# CoTFormer shifted-start counting experiment.
+# BUT shifted-start counting baseline.
 #
 # Usage:
-#   cd ~/CoTFormer && bash iridis/tak-shifted-start-cotformer-train/job.sh
+#   cd ~/CoTFormer && bash iridis/tak-shifted-start-but-train/job.sh
 #
 # Requires:
 #   bash iridis/tak-shifted-start-data-prep/job.sh
@@ -21,44 +21,70 @@
 # ========================= CONFIGURATION ====================================
 
 TASK="counting_samesymbol_shiftedstart3__tr25_te200__"
+MODEL_NAME="base"
 N_GPUS=1
-N_LAYER=1
-N_REPEAT=4
+N_LAYER=4
+N_LAYER_BEGIN=0
+N_LAYER_END=0
 ITERATIONS=5000
 BATCH_SIZE=8
 ACC_STEPS=16
 CKPT_FREQ=100
 EVAL_FREQ=100
-TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
-EVAL_SPLITS="${EVAL_SPLITS:-val ood_test}"
+TRAIN_SPLIT="${TRAIN_SPLIT:-train_var_len}"
+EVAL_SPLITS="${EVAL_SPLITS:-ood_test val_var_len}"
 SEED="${SEED:-0}"
 BEST_SPLIT="${BEST_SPLIT:-ood_test}"
 BEST_METRIC="${BEST_METRIC:-acc}"
 BIG_EVAL_SPLITS="${BIG_EVAL_SPLITS:-val val_var_len ood_test ood_test_sampled ood_test_grid_ltmax ood_test_max_len ood_test_grid}"
 BIG_EVAL_MAX_BATCHES="${BIG_EVAL_MAX_BATCHES:-}"
 
-# Reserved layers:
-N_LAYER_BEGIN=0
-N_LAYER_END=0
 
+
+
+N_EMBD=128
+N_HEAD=4
 # ========================= END CONFIGURATION ================================
 
+# if [ -z "$SLURM_JOB_ID" ]; then
+#     PACKAGE_DIR="$(cd "$(dirname "$0")" && pwd)"
+#     REPO_DIR="$(cd "$PACKAGE_DIR/../.." && pwd)"
+#     source "$REPO_DIR/iridis/env.sh"
+
+#     RUN_DIR=$(next_run_dir "$PACKAGE_DIR")
+#     echo "=== Shifted-start BUT training ==="
+#     echo "  Partition: ecsstudents_l4"
+#     echo "  GPUs:      $N_GPUS"
+#     echo "  Task:      $TASK"
+#     echo "  Train:     $TRAIN_SPLIT"
+#     echo "  Eval:      $EVAL_SPLITS"
+#     echo "  Seed:      $SEED"
+#     echo "  Best:      $BEST_SPLIT.$BEST_METRIC"
+#     echo "  Big eval:  $BIG_EVAL_SPLITS"
+#     echo "  Layers:    $N_LAYER (${N_LAYER_BEGIN}+mid*${N_REPEAT}+${N_LAYER_END})"
+#     echo "  Steps:     $ITERATIONS"
+#     echo "  Eff. BS:   $((BATCH_SIZE * ACC_STEPS))"
+#     echo "  Logs:      $RUN_DIR/"
+#     echo ""
+#     exec sbatch \
+#         --output="$RUN_DIR/slurm_%j.out" \
+#         --error="$RUN_DIR/slurm_%j.err" \
+#         --mail-type=BEGIN,END,FAIL \
+#         --mail-user="$NOTIFY_EMAIL" \
+#         --export=ALL,REPO_DIR="$REPO_DIR",RUN_DIR="$RUN_DIR" \
+#         "$0" "$@"
+# fi
 if [ -z "$SLURM_JOB_ID" ]; then
     PACKAGE_DIR="$(cd "$(dirname "$0")" && pwd)"
     REPO_DIR="$(cd "$PACKAGE_DIR/../.." && pwd)"
     source "$REPO_DIR/iridis/env.sh"
 
     RUN_DIR=$(next_run_dir "$PACKAGE_DIR")
-    echo "=== CoTFormer shifted-start training ==="
+    echo "=== Shifted-start base training ==="
     echo "  Partition: ecsstudents_l4"
     echo "  GPUs:      $N_GPUS"
     echo "  Task:      $TASK"
-    echo "  Train:     $TRAIN_SPLIT"
-    echo "  Eval:      $EVAL_SPLITS"
-    echo "  Seed:      $SEED"
-    echo "  Best:      $BEST_SPLIT.$BEST_METRIC"
-    echo "  Big eval:  $BIG_EVAL_SPLITS"
-    echo "  Layers:    $N_LAYER (${N_LAYER_BEGIN}+mid*${N_REPEAT}+${N_LAYER_END})"
+    echo "  Layers:    $N_LAYER"
     echo "  Steps:     $ITERATIONS"
     echo "  Eff. BS:   $((BATCH_SIZE * ACC_STEPS))"
     echo "  Logs:      $RUN_DIR/"
@@ -71,7 +97,6 @@ if [ -z "$SLURM_JOB_ID" ]; then
         --export=ALL,REPO_DIR="$REPO_DIR",RUN_DIR="$RUN_DIR" \
         "$0" "$@"
 fi
-
 set -eo pipefail
 export PYTHONUNBUFFERED=1
 
@@ -82,6 +107,7 @@ if [ -z "$REPO_DIR" ]; then
 fi
 
 source "$REPO_DIR/iridis/env.sh"
+
 if [ -z "$RUN_DIR" ]; then
     RUN_DIR=$(job_output_dir)
 fi
@@ -107,7 +133,7 @@ export PYTHONPATH="$REPO_DIR:$REPO_DIR/tak-shifted-start:${PYTHONPATH:-}"
 cd "$REPO_DIR"
 
 echo "========================================="
-echo " CoTFormer Shifted-start Training"
+echo " Shifted-start BUT Training"
 echo " User:          $USER"
 echo " Node:          $(hostname)"
 echo " CPUs:          $SLURM_CPUS_PER_TASK"
@@ -119,7 +145,7 @@ echo " Eval splits:   $EVAL_SPLITS"
 echo " Seed:          $SEED"
 echo " Best metric:   $BEST_SPLIT.$BEST_METRIC"
 echo " Big eval:      $BIG_EVAL_SPLITS"
-echo " Model:         fixed_cot_attn"
+echo " Model:         $MODEL_NAME"
 echo " Architecture:  ${N_LAYER}L (${N_LAYER_BEGIN}->mid*${N_REPEAT}->${N_LAYER_END})"
 echo " Iterations:    $ITERATIONS"
 echo " Eff. BS:       $((BATCH_SIZE * ACC_STEPS))"
@@ -161,11 +187,10 @@ fi
 
 TRAIN_ARGS=(
     --config_format base
-    --model fixed_cot_attn
-    --n_embd 768   #not sure about these whatsoever
-    --n_head 12   #not sure about these whatsoever
+    --model "$MODEL_NAME"
+    --n_embd "$N_EMBD"   #not sure about these whatsoever
+    --n_head "$N_HEAD"   #not sure about these whatsoever
     --n_layer "$N_LAYER"
-    --n_repeat "$N_REPEAT"
     --batch_size "$BATCH_SIZE"
     --sequence_length 256
     --acc_steps "$ACC_STEPS"
@@ -177,20 +202,18 @@ TRAIN_ARGS=(
     --warmup_percent 0.2
     --eval_freq "$EVAL_FREQ"
     --seed "$SEED"
-    --n_layer_begin "$N_LAYER_BEGIN"
-    --n_layer_end "$N_LAYER_END"
     --results_base_folder "$EXPS_DIR"
-    --exp_name "shifted_start_${TASK}_fixed_cot_attn_${N_LAYER}layer_${N_REPEAT}repeat${DATA_VARIANT_SUFFIX}_bs${BATCH_SIZE}x${ACC_STEPS}_seqlen256_seed${SEED}"
+    --exp_name "5k_varlen_shifted_start_${TASK}_base_${N_LAYER}layer_d${N_EMBD}_h${N_HEAD}${DATA_VARIANT_SUFFIX}_bs${BATCH_SIZE}x${ACC_STEPS}_seqlen256_seed${SEED}"
     --use_pretrained auto
     --ib_task "$TASK"
     --ib_data_root "$DATA_DIR/rasp_primitives"
-    --ib_train_split "$TRAIN_SPLIT"
     --ib_eval_splits $EVAL_SPLITS
+    --ib_train_split "$TRAIN_SPLIT"
+    --ib_save_every "$CKPT_FREQ"
+    --ib_log_every 100
     --ib_best_split "$BEST_SPLIT"
     --ib_best_metric "$BEST_METRIC"
     "${BIG_EVAL_ARGS[@]}"
-    --ib_save_every "$CKPT_FREQ"
-    --ib_log_every 100
     --wandb
     --wandb_project rcotformer
     "$@"
@@ -219,10 +242,10 @@ echo "========================================="
 echo " Training finished: $(date)"
 echo " Exit code: $EXIT_CODE"
 echo ""
-echo " Checkpoints: $EXPS_DIR/$TASK/fixed_cot_attn/"
+echo " Checkpoints: $EXPS_DIR/$TASK/$MODEL_NAME/"
 echo ""
 echo " If training incomplete, resubmit:"
-echo "   bash iridis/tak-shifted-start-cotformer-train/job.sh"
+echo "   bash iridis/low-dim-varlen-base-train/job.sh"
 echo ""
 echo " After training completes, sync WandB:"
 echo "   wandb sync $WANDB_DIR/<offline-run-*>"

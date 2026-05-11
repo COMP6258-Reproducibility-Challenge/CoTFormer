@@ -29,8 +29,8 @@ BATCH_SIZE=8
 ACC_STEPS=16
 CKPT_FREQ=100
 EVAL_FREQ=100
-TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
-EVAL_SPLITS="${EVAL_SPLITS:-val ood_test}"
+TRAIN_SPLIT="${TRAIN_SPLIT:-train_var_len}"
+EVAL_SPLITS="${EVAL_SPLITS:-val_var_len ood_test ood_test_grid_ltmax ood_test_max_len}"
 SEED="${SEED:-0}"
 BEST_SPLIT="${BEST_SPLIT:-ood_test}"
 BEST_METRIC="${BEST_METRIC:-acc}"
@@ -49,7 +49,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
     source "$REPO_DIR/iridis/env.sh"
 
     RUN_DIR=$(next_run_dir "$PACKAGE_DIR")
-    echo "=== CoTFormer shifted-start training ==="
+    echo "=== Unfaithful/varlen CoTFormer shifted-start training ==="
     echo "  Partition: ecsstudents_l4"
     echo "  GPUs:      $N_GPUS"
     echo "  Task:      $TASK"
@@ -180,7 +180,7 @@ TRAIN_ARGS=(
     --n_layer_begin "$N_LAYER_BEGIN"
     --n_layer_end "$N_LAYER_END"
     --results_base_folder "$EXPS_DIR"
-    --exp_name "shifted_start_${TASK}_fixed_cot_attn_${N_LAYER}layer_${N_REPEAT}repeat${DATA_VARIANT_SUFFIX}_bs${BATCH_SIZE}x${ACC_STEPS}_seqlen256_seed${SEED}"
+    --exp_name "5k_varlen_shifted_start_${TASK}_fixed_cot_attn_${N_LAYER}layer_${N_REPEAT}repeat${DATA_VARIANT_SUFFIX}_bs${BATCH_SIZE}x${ACC_STEPS}_seqlen256_seed${SEED}"
     --use_pretrained auto
     --ib_task "$TASK"
     --ib_data_root "$DATA_DIR/rasp_primitives"

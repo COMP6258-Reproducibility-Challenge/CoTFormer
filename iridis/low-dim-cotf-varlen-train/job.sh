@@ -12,10 +12,10 @@
 # CoTFormer shifted-start counting experiment.
 #
 # Usage:
-#   cd ~/CoTFormer && bash iridis/tak-shifted-start-cotformer-train/job.sh
+#   cd ~/CoTFormer && bash iridis/low-dim-cotf-varlen-train/job.sh
 #
 # Requires:
-#   bash iridis/tak-shifted-start-data-prep/job.sh
+#   bash iridis/low-dim-cotf-varlen-train/job.sh
 ################################################################################
 
 # ========================= CONFIGURATION ====================================
@@ -29,8 +29,8 @@ BATCH_SIZE=8
 ACC_STEPS=16
 CKPT_FREQ=100
 EVAL_FREQ=100
-TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
-EVAL_SPLITS="${EVAL_SPLITS:-val ood_test}"
+TRAIN_SPLIT="${TRAIN_SPLIT:-train_var_len}"
+EVAL_SPLITS="${EVAL_SPLITS:-ood_test val_var_len}"
 SEED="${SEED:-0}"
 BEST_SPLIT="${BEST_SPLIT:-ood_test}"
 BEST_METRIC="${BEST_METRIC:-acc}"
@@ -41,6 +41,10 @@ BIG_EVAL_MAX_BATCHES="${BIG_EVAL_MAX_BATCHES:-}"
 N_LAYER_BEGIN=0
 N_LAYER_END=0
 
+# Width
+
+N_EMBD=128
+N_HEAD=4
 # ========================= END CONFIGURATION ================================
 
 if [ -z "$SLURM_JOB_ID" ]; then
@@ -49,7 +53,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
     source "$REPO_DIR/iridis/env.sh"
 
     RUN_DIR=$(next_run_dir "$PACKAGE_DIR")
-    echo "=== CoTFormer shifted-start training ==="
+    echo "=== Unfaithful/varlen CoTFormer shifted-start training ==="
     echo "  Partition: ecsstudents_l4"
     echo "  GPUs:      $N_GPUS"
     echo "  Task:      $TASK"
@@ -58,6 +62,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
     echo "  Seed:      $SEED"
     echo "  Best:      $BEST_SPLIT.$BEST_METRIC"
     echo "  Big eval:  $BIG_EVAL_SPLITS"
+    echo "  width and heads:    $N_EMBD (${N_EMBD}+N_HEAD*${N_HEAD})"
     echo "  Layers:    $N_LAYER (${N_LAYER_BEGIN}+mid*${N_REPEAT}+${N_LAYER_END})"
     echo "  Steps:     $ITERATIONS"
     echo "  Eff. BS:   $((BATCH_SIZE * ACC_STEPS))"
@@ -162,8 +167,8 @@ fi
 TRAIN_ARGS=(
     --config_format base
     --model fixed_cot_attn
-    --n_embd 768   #not sure about these whatsoever
-    --n_head 12   #not sure about these whatsoever
+    --n_embd "$N_EMBD"   #not sure about these whatsoever
+    --n_head "$N_HEAD"   #not sure about these whatsoever
     --n_layer "$N_LAYER"
     --n_repeat "$N_REPEAT"
     --batch_size "$BATCH_SIZE"
@@ -180,7 +185,7 @@ TRAIN_ARGS=(
     --n_layer_begin "$N_LAYER_BEGIN"
     --n_layer_end "$N_LAYER_END"
     --results_base_folder "$EXPS_DIR"
-    --exp_name "shifted_start_${TASK}_fixed_cot_attn_${N_LAYER}layer_${N_REPEAT}repeat${DATA_VARIANT_SUFFIX}_bs${BATCH_SIZE}x${ACC_STEPS}_seqlen256_seed${SEED}"
+    --exp_name "mid_reserve_5k_varlen_shifted_start_${TASK}_fixed_cot_attn_${N_LAYER_BEGIN}B_${N_REPEAT}R_${N_LAYER_END}_${N_LAYER}layer_repeat_N_head${N_HEAD}_N_embd_${N_EMBD}${DATA_VARIANT_SUFFIX}_bs${BATCH_SIZE}x${ACC_STEPS}_seqlen256_seed${SEED}"
     --use_pretrained auto
     --ib_task "$TASK"
     --ib_data_root "$DATA_DIR/rasp_primitives"
@@ -195,7 +200,8 @@ TRAIN_ARGS=(
     --wandb_project rcotformer
     "$@"
 )
-
+#--n_layer_begin "$N_LAYER_BEGIN"
+    
 if [ "$N_GPUS" -gt 1 ]; then
     export OMP_NUM_THREADS=1
     RDZV_HOST=$(hostname)
@@ -222,7 +228,7 @@ echo ""
 echo " Checkpoints: $EXPS_DIR/$TASK/fixed_cot_attn/"
 echo ""
 echo " If training incomplete, resubmit:"
-echo "   bash iridis/tak-shifted-start-cotformer-train/job.sh"
+echo "   bash iridis/low-dim-cotf-varlen-train/job.sh"
 echo ""
 echo " After training completes, sync WandB:"
 echo "   wandb sync $WANDB_DIR/<offline-run-*>"

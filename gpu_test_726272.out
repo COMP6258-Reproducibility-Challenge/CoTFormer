@@ -1,0 +1,38 @@
+Running SLURM prolog script on ecsai06
+===============================================================================
+Job started on Sat Mar 28 16:53:09 GMT 2026
+Job ID          : 726272
+Job name        : gpu_test
+WorkDir         : /iridisfs/home/tak1e25/CoTFormer
+Command         : /iridisfs/home/tak1e25/CoTFormer/test_gpu.sh
+Partition       : ecsstudents_l4
+Num hosts       : 1
+Num cores       : 2
+Num of tasks    : 1
+Hosts allocated : ecsai06
+Job Output Follows ...
+===============================================================================
+Traceback (most recent call last):
+  File "/iridisfs/home/tak1e25/CoTFormer/test_gpu.py", line 1, in <module>
+    import torch
+ModuleNotFoundError: No module named 'torch'
+==============================================================================
+Running epilogue script on ecsai06.
+
+Submit time  : 2026-03-28T16:51:43
+Start time   : 2026-03-28T16:53:08
+End time     : 2026-03-28T16:53:10
+Elapsed time : 00:00:02 (Timelimit=00:05:00)
+
+Job ID: 726272
+Cluster: iridis_x
+User/Group: tak1e25/fp
+State: FAILED (exit code 1)
+Nodes: 1
+Cores per node: 2
+CPU Utilized: 00:00:01
+CPU Efficiency: 25.00% of 00:00:04 core-walltime
+Job Wall-clock time: 00:00:02
+Memory Utilized: 6.15 MB
+Memory Efficiency: 0.03% of 17.29 GB (8.65 GB/core)
+

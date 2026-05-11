@@ -4,9 +4,9 @@
 #SBATCH --account=ecsstudents
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
-#SBATCH --mem=16G
+#SBATCH --mem=8G
 #SBATCH --time=24:00:00
 ################################################################################
 # Standard Transformer shifted-start counting baseline.
@@ -24,11 +24,11 @@ TASK="counting_samesymbol_shiftedstart3__tr25_te200__"
 MODEL_NAME="base"
 N_GPUS=1
 N_LAYER=4
-ITERATIONS=100
+ITERATIONS=5000
 BATCH_SIZE=8
 ACC_STEPS=16
-CKPT_FREQ=20
-EVAL_FREQ=10
+CKPT_FREQ=100
+EVAL_FREQ=100
 TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
 EVAL_SPLITS="${EVAL_SPLITS:-val ood_test}"
 SEED="${SEED:-0}"
@@ -184,7 +184,7 @@ TRAIN_ARGS=(
     --ib_best_metric "$BEST_METRIC"
     "${BIG_EVAL_ARGS[@]}"
     --ib_save_every "$CKPT_FREQ"
-    --ib_log_every 10
+    --ib_log_every 100
     --wandb
     --wandb_project rcotformer
     "$@"

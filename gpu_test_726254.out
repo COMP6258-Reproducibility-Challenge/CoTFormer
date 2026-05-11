@@ -1,0 +1,40 @@
+Running SLURM prolog script on ecsai06
+===============================================================================
+Job started on Sat Mar 28 16:41:08 GMT 2026
+Job ID          : 726254
+Job name        : gpu_test
+WorkDir         : /iridisfs/home/tak1e25/CoTFormer
+Command         : /iridisfs/home/tak1e25/CoTFormer/test_gpu.sh
+Partition       : ecsstudents_l4
+Num hosts       : 1
+Num cores       : 2
+Num of tasks    : 1
+Hosts allocated : ecsai06
+Job Output Follows ...
+===============================================================================
+/var/spool/slurm/job726254/slurm_script: line 11: act: command not found
+Python version: 3.11.15 | packaged by conda-forge | (main, Mar  5 2026, 16:45:40) [GCC 14.3.0]
+PyTorch version: 2.2.0+cu118
+Is CUDA available? True
+GPU Name: NVIDIA L4
+GPU Memory: 23.66 GB
+==============================================================================
+Running epilogue script on ecsai06.
+
+Submit time  : 2026-03-28T16:40:43
+Start time   : 2026-03-28T16:41:08
+End time     : 2026-03-28T16:41:16
+Elapsed time : 00:00:08 (Timelimit=00:05:00)
+
+Job ID: 726254
+Cluster: iridis_x
+User/Group: tak1e25/fp
+State: COMPLETED (exit code 0)
+Nodes: 1
+Cores per node: 2
+CPU Utilized: 00:00:03
+CPU Efficiency: 18.75% of 00:00:16 core-walltime
+Job Wall-clock time: 00:00:08
+Memory Utilized: 6.11 MB
+Memory Efficiency: 0.03% of 17.29 GB (8.65 GB/core)
+
