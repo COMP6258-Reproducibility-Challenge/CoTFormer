@@ -3,7 +3,7 @@ import json
 import math
 import re
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -31,6 +31,7 @@ class PHopTaskSpec:
     include_hop_token: bool = False
     ensure_exists: bool = True
     avoid_adjacent_repeats: bool = True
+    sampling_strategy: str = "rejection"
     pad_token: str = "<pad>"
 
     @property
@@ -55,8 +56,14 @@ def make_phop_task_name(
     seq_len: int = 256,
     char_tokens: int = 4,
     include_hop_token: bool = False,
+    sampling_strategy: str = "rejection",
 ) -> str:
-    suffix = "_hoptok" if include_hop_token else ""
+    suffixes = []
+    if include_hop_token:
+        suffixes.append("hoptok")
+    if sampling_strategy == "constructive":
+        suffixes.append("constructive")
+    suffix = "".join(f"_{suffix}" for suffix in suffixes)
     return f"phop_p{hops}_seq{seq_len}_a{char_tokens}_final{suffix}"
 
 
@@ -69,17 +76,33 @@ def _char_vocab(char_tokens: int) -> List[str]:
 
 
 def get_phop_task_spec(task: str = DEFAULT_PHOP_TASK) -> PHopTaskSpec:
-    match = re.fullmatch(r"phop_p(\d+)_seq(\d+)_a(\d+)_final(_hoptok)?", task)
+    match = re.fullmatch(r"phop_p(\d+)_seq(\d+)_a(\d+)_final((?:_[a-z0-9]+)*)", task)
     if match is None:
         raise ValueError(
-            "Expected p-hop task name like 'phop_p8_seq256_a4_final'; "
+            "Expected p-hop task name like 'phop_p8_seq256_a4_final' or "
+            "'phop_p8_seq256_a4_final_constructive'; "
             f"got {task!r}."
         )
 
     hops = int(match.group(1))
     seq_len = int(match.group(2))
     char_tokens = int(match.group(3))
-    include_hop_token = bool(match.group(4))
+    suffixes = set(filter(None, match.group(4).split("_")))
+    allowed_suffixes = {"hoptok", "constructive", "allowadj", "noadj"}
+    unknown_suffixes = suffixes - allowed_suffixes
+    if unknown_suffixes:
+        raise ValueError(
+            f"Unknown p-hop task suffixes {sorted(unknown_suffixes)} in {task!r}."
+        )
+    include_hop_token = "hoptok" in suffixes
+    sampling_strategy = "constructive" if "constructive" in suffixes else "rejection"
+    avoid_adjacent_repeats = True
+    if sampling_strategy == "constructive":
+        avoid_adjacent_repeats = False
+    if "allowadj" in suffixes:
+        avoid_adjacent_repeats = False
+    if "noadj" in suffixes:
+        avoid_adjacent_repeats = True
 
     vocab = _char_vocab(char_tokens)
     if include_hop_token:
@@ -93,6 +116,8 @@ def get_phop_task_spec(task: str = DEFAULT_PHOP_TASK) -> PHopTaskSpec:
         max_hops=hops,
         char_tokens=char_tokens,
         include_hop_token=include_hop_token,
+        avoid_adjacent_repeats=avoid_adjacent_repeats,
+        sampling_strategy=sampling_strategy,
         vocab=vocab,
     )
 
@@ -107,6 +132,7 @@ def make_generator(spec: PHopTaskSpec, seed: int) -> InductionHopsFinalAnswerTas
         ensure_exists=spec.ensure_exists,
         include_hop_token=spec.include_hop_token,
         avoid_adjacent_repeats=spec.avoid_adjacent_repeats,
+        sampling_strategy=spec.sampling_strategy,
     )
 
 
@@ -116,6 +142,7 @@ def write_phop_split(
     num_examples: int,
     seed: int,
     force: bool = False,
+    progress_every: int = 10000,
 ) -> int:
     output_path = Path(output_path)
     if output_path.exists() and not force:
@@ -124,9 +151,14 @@ def write_phop_split(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     generator = make_generator(spec, seed)
     with output_path.open("w", encoding="utf-8") as handle:
-        for _ in range(num_examples):
+        for example_idx in range(num_examples):
             input_tokens, label_tokens = generator.get_tokens()
             handle.write(json.dumps([input_tokens, label_tokens]) + "\n")
+            if progress_every > 0 and (example_idx + 1) % progress_every == 0:
+                print(
+                    f"{output_path.name}: wrote {example_idx + 1}/{num_examples} examples",
+                    flush=True,
+                )
     return num_examples
 
 
@@ -325,6 +357,17 @@ def parse_split_sizes(values: List[str]) -> Dict[str, int]:
     return result
 
 
+def parse_auto_bool(value: str, *, name: str) -> Optional[bool]:
+    normalized = value.lower()
+    if normalized == "auto":
+        return None
+    if normalized in {"1", "true", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "n"}:
+        return False
+    raise ValueError(f"{name} must be auto/true/false, got {value!r}.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate fixed p-hop JSONL splits.")
     parser.add_argument("--task", default=DEFAULT_PHOP_TASK)
@@ -336,11 +379,49 @@ def main():
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--progress_every", type=int, default=10000)
+    parser.add_argument(
+        "--sampling_strategy",
+        choices=["auto", "rejection", "constructive"],
+        default="auto",
+        help="Override task-name sampler. 'auto' uses the task suffix/default.",
+    )
+    parser.add_argument(
+        "--avoid_adjacent_repeats",
+        default="auto",
+        help="auto/true/false. Constructive paper-style data usually uses false.",
+    )
     args = parser.parse_args()
 
     spec = get_phop_task_spec(args.task)
+    avoid_adjacent_repeats = parse_auto_bool(
+        args.avoid_adjacent_repeats,
+        name="avoid_adjacent_repeats",
+    )
+    spec = replace(
+        spec,
+        sampling_strategy=(
+            spec.sampling_strategy
+            if args.sampling_strategy == "auto"
+            else args.sampling_strategy
+        ),
+        avoid_adjacent_repeats=(
+            spec.avoid_adjacent_repeats
+            if avoid_adjacent_repeats is None
+            else avoid_adjacent_repeats
+        ),
+    )
     data_root = Path(args.data_root)
     split_sizes = parse_split_sizes(args.split_sizes)
+    print(
+        "p-hop spec: "
+        f"task={spec.name} seq_len={spec.seq_len} "
+        f"hops={spec.min_hops}-{spec.max_hops} "
+        f"alphabet={spec.char_tokens} "
+        f"sampling={spec.sampling_strategy} "
+        f"avoid_adjacent_repeats={spec.avoid_adjacent_repeats}",
+        flush=True,
+    )
 
     for split_idx, (split, num_examples) in enumerate(split_sizes.items()):
         split_seed = args.seed + split_idx
@@ -351,6 +432,7 @@ def main():
             num_examples=num_examples,
             seed=split_seed,
             force=args.force,
+            progress_every=args.progress_every,
         )
         print(f"{split}: wrote {count} examples to {output_path}")
 

@@ -135,6 +135,7 @@ class InductionHopsFinalAnswerTask:
         max_resample_attempts: int = 10000,
         include_hop_token: bool = False,
         avoid_adjacent_repeats: bool = True,
+        sampling_strategy: str = "rejection",
     ):
         if seq_len < 2:
             raise ValueError("seq_len must be at least 2.")
@@ -157,6 +158,12 @@ class InductionHopsFinalAnswerTask:
         self.max_resample_attempts = max_resample_attempts
         self.include_hop_token = include_hop_token
         self.avoid_adjacent_repeats = avoid_adjacent_repeats
+        self.sampling_strategy = sampling_strategy
+        if sampling_strategy not in {"rejection", "constructive"}:
+            raise ValueError(
+                "sampling_strategy must be 'rejection' or 'constructive', "
+                f"got {sampling_strategy!r}."
+            )
 
         self.DOES_NOT_EXIST_CHAR = "~"
         self.IGNORE_LABEL = "-1"
@@ -214,6 +221,104 @@ class InductionHopsFinalAnswerTask:
 
         return query, path
 
+    def _sample_constructive_sequence(self, hops):
+        """Sample a sequence by first planting a valid p-hop chain.
+
+        The paper describes p-hop examples as being built by choosing the hop
+        chain and then filling the remaining positions while preserving that
+        chain's order. This sampler mirrors that idea: it fixes positions that
+        force the nearest-previous-occurrence traversal, then samples all
+        filler tokens subject to the constraints needed to keep that traversal
+        valid.
+        """
+        if hops == 0:
+            seq = self._sample_char_sequence()
+            return seq, [(self.seq_len - 1, seq[-1])]
+
+        # Need one current position and one previous-occurrence position per hop.
+        min_len = 2 * hops + 2
+        if self.seq_len < min_len:
+            raise ValueError(
+                f"seq_len={self.seq_len} is too short to construct a non-degenerate "
+                f"{hops}-hop chain; need at least {min_len}."
+            )
+
+        chars = list(self.char_token_map.keys())
+        for _ in range(self.max_resample_attempts):
+            max_base = self.seq_len - hops - 2
+            base_positions = sorted(
+                self.rng.choice(np.arange(1, max_base + 1), size=hops, replace=False)
+            )
+            ascending_currents = [
+                int(position + offset)
+                for offset, position in enumerate(base_positions)
+            ]
+            current_positions = [self.seq_len - 1] + list(reversed(ascending_currents))
+
+            path_tokens = [self.rng.choice(chars)]
+            for _ in range(hops):
+                choices = [char for char in chars if char != path_tokens[-1]]
+                path_tokens.append(self.rng.choice(choices))
+
+            fixed = {current_positions[0]: path_tokens[0]}
+            forbidden = [set() for _ in range(self.seq_len)]
+
+            for hop_idx in range(1, hops + 1):
+                old_current = current_positions[hop_idx - 1]
+                new_current = current_positions[hop_idx]
+                previous_idx = new_current - 1
+                old_query = path_tokens[hop_idx - 1]
+
+                fixed[previous_idx] = old_query
+                fixed[new_current] = path_tokens[hop_idx]
+
+                # Make previous_idx the nearest previous occurrence of old_query.
+                for idx in range(new_current, old_current):
+                    forbidden[idx].add(old_query)
+
+            invalid_fixed = any(
+                char in forbidden[idx]
+                for idx, char in fixed.items()
+            )
+            if invalid_fixed:
+                continue
+
+            seq = [None] * self.seq_len
+            for idx, char in fixed.items():
+                seq[idx] = char
+
+            valid = True
+            for idx in range(self.seq_len):
+                if seq[idx] is not None:
+                    if (
+                        self.avoid_adjacent_repeats
+                        and idx > 0
+                        and seq[idx - 1] == seq[idx]
+                    ):
+                        valid = False
+                        break
+                    continue
+
+                choices = [char for char in chars if char not in forbidden[idx]]
+                if self.avoid_adjacent_repeats and idx > 0:
+                    choices = [char for char in choices if char != seq[idx - 1]]
+                if not choices:
+                    valid = False
+                    break
+                seq[idx] = self.rng.choice(choices)
+
+            if not valid:
+                continue
+
+            answer, path = self._compute_final_answer(seq, hops)
+            if answer == path_tokens[-1] and len(path) == hops + 1:
+                return seq, path
+
+        raise RuntimeError(
+            f"Could not construct a valid {hops}-hop example after "
+            f"{self.max_resample_attempts} attempts."
+        )
+
     def _sample_hops(self, hops=None):
         if hops is not None:
             if not (self.min_hops <= hops <= self.max_hops):
@@ -225,16 +330,20 @@ class InductionHopsFinalAnswerTask:
 
     def get_tokens(self, metadata=False, hops=None):
         num_hops = self._sample_hops(hops)
-        for _ in range(self.max_resample_attempts):
-            seq = self._sample_char_sequence()
-            answer, path = self._compute_final_answer(seq, num_hops)
-            if answer is not None or not self.ensure_exists:
-                break
+        if self.sampling_strategy == "constructive":
+            seq, path = self._sample_constructive_sequence(num_hops)
+            answer = path[-1][1]
         else:
-            raise RuntimeError(
-                f"Could not sample a valid {num_hops}-hop example after "
-                f"{self.max_resample_attempts} attempts."
-            )
+            for _ in range(self.max_resample_attempts):
+                seq = self._sample_char_sequence()
+                answer, path = self._compute_final_answer(seq, num_hops)
+                if answer is not None or not self.ensure_exists:
+                    break
+            else:
+                raise RuntimeError(
+                    f"Could not sample a valid {num_hops}-hop example after "
+                    f"{self.max_resample_attempts} attempts."
+                )
 
         if answer is None:
             answer = self.DOES_NOT_EXIST_CHAR
@@ -254,6 +363,7 @@ class InductionHopsFinalAnswerTask:
                 "answer": answer,
                 "path": path,
                 "raw_sequence": seq,
+                "sampling_strategy": self.sampling_strategy,
             }
         return input_tokens, label_tokens
 
