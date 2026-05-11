@@ -1,7 +1,12 @@
-# reproduce-table1-fig23 — Table 1 + Figure 2 + Figure 3
+# base-cots-eval — Table 1 + Figure 2 + Figure 3
 
 Reproduces the CoTFormer rows in Table 1 and both Figure 2 and Figure 3 from
-the paper (Mohtashami et al., ICLR 2025).
+the paper (Mohtashami et al., ICLR 2025). Evaluates the seven `BaseCot_*`
+ablations (12L × {2, 3, 5, 15} R + 24L × {2, 3, 5} R) on OWT2 val.
+
+See [`docs/reprod-notes.md`](../../docs/reprod-notes.md) §A8 (Table 1), §A9
+(Figure 2), §A10 (Figure 3) for the methodology, deviations from the paper,
+and uncertainty interpretation.
 
 ---
 
@@ -49,7 +54,7 @@ Figure 3 uses only analytical MACs (no checkpoints needed for that panel).
 
 ```bash
 cd ~/CoTFormer
-bash iridis/reproduce-table1-fig23/job.sh
+bash iridis/base-cots-eval/job.sh
 ```
 
 The script self-submits via `sbatch` when run on a login node. On first run it
@@ -92,9 +97,18 @@ No `.npy`, `.pt`, or checkpoint files land in `run_N`.
 
 ## Expected wall time
 
-15–30 minutes on L4 GPU (7 ablations × single forward-pass eval, then CPU-bound
-plotting). 1.5 h walltime allocation is generous headroom for queue/startup
-overhead.
+~50–70 minutes on L4 GPU. Phase 1 (MAC computation) is CPU-only via the
+closed-form formula and completes in <1 s. Phase 2 (7 ablation evals) is the
+dominant cost; the slow tails are `BaseCot_12L_15R` (high `n_repeat`, large
+effective attention context) and `BaseCot_24L_5R` (deepest model). The current
+2.5 h walltime allocation has ~2× headroom for queue/startup variance.
+
+The MAC computation moved to a closed-form formula after a `ptflops` OOM at
+`seq_len=8192` in an earlier run (see `run_0/slurm_*.out` for the original
+trace and `docs/reprod-notes.md` §A10 for the rationale). The formula is
+bit-exact validated against `ptflops` at four reference points on script
+startup, so future architecture drift will fail loudly rather than silently
+mis-counting MACs.
 
 ---
 

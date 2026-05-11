@@ -1,19 +1,25 @@
 #!/bin/bash
-#SBATCH --job-name=reproduce_t1_f23
+#SBATCH --job-name=base_cots_eval
 #SBATCH --partition=ecsstudents_l4
 #SBATCH --account=ecsstudents
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --mem=64G
+#SBATCH --mem=400G
 #SBATCH --time=02:30:00
 ################################################################################
-# Table 1 + Figure 2 + Figure 3 Reproduction Pipeline
+# base-cots-eval -- Table 1 + Figure 2 + Figure 3 Reproduction
+#
+# Evaluates the seven BaseCot_* CoTFormer ablations on OWT2 val and renders
+# Table 1, Figure 2 (Pareto), and Figure 3 (MACs vs seq_len) verbatim against
+# the paper (Mohtashami et al., ICLR 2025).
 #
 # Runs end-to-end:
-#   1. Compute analytical MACs (no weights needed — synthetic configs)
-#   2. Eval sweep across 7 CoTFormer ablations → results_table1_fig2.json
+#   1. Compute analytical MACs (closed-form formula, CPU-only, no OOM risk).
+#      See docs/reprod-notes.md §A10 for the closed-form derivation; the prior
+#      ptflops-backed approach OOM'd at seq_len >= 8192 even on L4 24 GB.
+#   2. Eval sweep across 7 CoTFormer ablations -> results_table1_fig2.json
 #   3. Plot Table 1 (LaTeX/Markdown table), Figure 2 (PPL vs MACs Pareto),
 #      Figure 3 (MACs vs sequence-length scaling)
 #
@@ -46,7 +52,7 @@
 # pattern). Per-ablation eval JSONs are small (< 10 KB each).
 #
 # Usage:
-#   cd ~/CoTFormer && bash iridis/reproduce-table1-fig23/job.sh
+#   cd ~/CoTFormer && bash iridis/base-cots-eval/job.sh
 ################################################################################
 
 # ========================= CONFIGURATION ====================================

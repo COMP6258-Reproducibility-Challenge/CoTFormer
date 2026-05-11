@@ -785,7 +785,9 @@ those use `n_layer_begin=2, n_layer_end=1`. Table 1 reports the basic
 CoTFormer without reserved layers, so `n_layer_begin=0, n_layer_end=0`
 is the correct configuration for this replication. The `n_repeat` value
 varies per ablation ({2, 3, 5} for both 12L and 24L; plus 15 for 12L
-only). Training packages live under `iridis/reproduce-table1-fig23/`.
+only). Evaluation is orchestrated by `iridis/base-cots-eval/job.sh`; the
+underlying training checkpoints (from `iridis/base-train/`) live under
+`/scratch/ab3u21/exps/owt2/cotformer_full_depth/`.
 
 ### Evaluation configuration
 
@@ -910,17 +912,51 @@ or val-set perplexity.
 
 ### Method
 
-`scripts/compute_macs.py` constructs a CoTFormer (and BUT) model from a
-synthetic config via `config.parse_args_with_format`, overriding
-`n_layer`, `n_repeat`, and `sequence_length` for each point in the sweep.
-It then calls `ptflops.get_model_complexity_info` with the `aten` backend,
-recreating the attention bias buffer at each `seq_len` to ensure the
-quadratic attention term scales correctly (following the pattern in
-`get_ppl_per_mac.py:get_macs_for_seqlens`). The resulting MAC values are
-written to `macs.json`; `results_fig3.json` is a reshaped subset covering
-only the two curves needed for Fig 3 (see `docs/schema_table1_fig23.md`).
-The x-axis in Fig 3 is log-scale; the plot script reads `results_fig3.json`
-and does not recompute MACs.
+`scripts/compute_macs.py` evaluates a closed-form MAC formula derived
+directly from `models/cotformer_full_depth.py` and `models/but_full_depth.py`
+(linear-per-token cost: `4·d_model² + 2·d_model·d_ff`; quadratic attention
+cost: `2·d_model·N²` where `N` is the attended-to sequence length per
+block; plus an `vocab·d_model` embedding-table constant matching ptflops'
+accounting). The resulting `macs.json` is consumed by `plot_fig2.py` and
+`plot_fig3.py`; the schema is in `docs/schema_table1_fig23.md`.
+
+The formula handles the three architectures differently:
+- **CoTFormer**: at repeat `r ∈ {1..n_repeat}`, the model processes T new
+  tokens while attending to `r·T` context (per `cotformer_full_depth.py`
+  lines 318–325). Summing over `r`: linear scales with `n_repeat`,
+  quadratic scales with `n_repeat·(n_repeat+1)`.
+- **BUT**: each of `n_repeat` passes attends to `T` tokens (no concatenation).
+- **Standard**: single pass at `T` tokens.
+
+The formula's correctness is verified at script startup against four
+bit-exact reference values captured from a real `ptflops` run on the
+BaseCot training config (CoTFormer 12L × {2,3,5} R @ seq=256 and
+12L × 3R @ seq=128). If `compute_macs.py` ever disagrees with `ptflops`
+on these reference points by even one MAC, the script aborts with a
+clear "formula drift detected" error — guarding against silent
+architecture changes in the model files.
+
+### Historical: the ptflops OOM that prompted the closed-form rewrite
+
+The original `compute_macs.py` (run_0, slurm 920549) called
+`get_ppl_per_mac.get_macs_for_seqlens`, which invokes `ptflops` with
+flash attention explicitly disabled. ptflops' `aten` backend then
+materialises the full `(n_repeat·T)²` attention score matrix to let its
+`__torch_dispatch__` hook count individual matmul MACs. At point
+`[10/29] CoTFormer 12L × 3R @ seq=8192`, the score matrix needed
+`24,576² × 4 bytes × 12 heads ≈ 28.8 GB`, exceeding the L4's 22 GB
+VRAM (`run_0/slurm_920549.out:65` records the
+`torch.cuda.OutOfMemoryError`). SLURM `--mem=400G` does **not** cap
+CUDA allocations — the OOM persists regardless of host RAM — so the
+fix is structural, not a resource bump.
+
+The closed-form approach computes the same MACs in microseconds on CPU
+without allocating any tensor larger than the model itself. The
+empirical bit-exact validation against the surviving 9 ptflops data
+points (slurm_920549.out lines 35–63) gives us higher confidence in
+the closed-form values at seq=8192 and seq=12288 than ptflops could
+ever deliver on L4 — ptflops simply cannot reach those scales on this
+hardware.
 
 ### Expected outcome and significance
 
