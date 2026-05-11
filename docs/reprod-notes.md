@@ -35,6 +35,19 @@
   - [A7. Section 5 Comparison: LN-CoTFormer vs ADM at 60k Steps](#a7-section-5-comparison-ln-cotformer-vs-adm-at-60k-steps)
     - [Absolute deltas](#absolute-deltas)
     - [Why the adaptive gap is smaller](#why-the-adaptive-gap-is-smaller)
+  - [A8. Table 1 — CoTFormer rows (40k steps) — partial replication](#a8-table-1--cotformer-rows-40k-steps--partial-replication)
+    - [Delta interpretation](#delta-interpretation-1)
+    - [Training configuration](#training-configuration-1)
+    - [Evaluation configuration](#evaluation-configuration-1)
+    - [Uncertainty interpretation](#uncertainty-interpretation)
+    - [Coverage: ours vs paper-reported reference](#coverage-ours-vs-paper-reported-reference)
+  - [A9. Figure 2 — accuracy–compute tradeoff (partial replication)](#a9-figure-2--accuracycompute-tradeoff-partial-replication)
+    - [Reproduction strategy](#reproduction-strategy)
+    - [Extra points beyond Table 1](#extra-points-beyond-table-1)
+    - [Visual style](#visual-style)
+  - [A10. Figure 3 — compute cost vs sequence length (analytical-only reproduction)](#a10-figure-3--compute-cost-vs-sequence-length-analytical-only-reproduction)
+    - [Method](#method)
+    - [Expected outcome and significance](#expected-outcome-and-significance)
 - [Part B: Known Divergences](#part-b-known-divergences)
   - [B1. Train/Val Split Divergence](#b1-trainval-split-divergence)
     - [B1a. Document ordering](#b1a-document-ordering)
@@ -104,6 +117,7 @@
     - [Warmup steps for 60k models](#warmup-steps-for-60k-models)
     - [LR schedule type](#lr-schedule-type)
     - [Resolution](#resolution)
+  - [C4. `eval.py` perplexity uses truncated `e` (2.71828) instead of `math.e` — Original Code Quirk](#c4-evalpy-perplexity-uses-truncated-e-271828-instead-of-mathe--original-code-quirk)
   - [References](#references)
 
 ---
@@ -724,6 +738,213 @@ LN-CoTFormer delta (+0.40) relative to the ADM delta (+0.23). Since
 only the LN-CoTFormer's perplexity, the gap narrows. A fresh
 60k-from-scratch LN-CoTFormer run would likely produce a wider gap
 closer to the paper's 0.64.
+
+---
+
+## A8. Table 1 — CoTFormer rows (40k steps) — partial replication
+
+We reproduce the CoTFormer-only rows of Table 1 from the paper using
+seven trained ablation checkpoints: `BaseCot_12L_2R`, `BaseCot_12L_3R`,
+`BaseCot_12L_5R`, `BaseCot_12L_15R`, `BaseCot_24L_2R`, `BaseCot_24L_3R`,
+and `BaseCot_24L_5R`. The Standard Transformer and Block Universal
+Transformer rows of Table 1 are paper-reported reference values — those
+architectures were not retrained as part of this submission. This partial
+replication is conducted in the fair-comparison regime
+([§M6](#m6-reproduction-fidelity-vs-fair-comparison-regime-distinction)):
+we use a different random seed and a different OWT2 train/val split
+([§B1](#b1-trainval-split-divergence)) from the original authors,
+so deltas relative to paper values are interpreted as training-noise
+plus split-divergence effects rather than numerical-precision errors.
+
+### Delta interpretation
+
+Each result cell deviates from the paper-reported value by ΔPPL = ours −
+paper. Because we operate in the fair-comparison regime
+([§M6](#m6-reproduction-fidelity-vs-fair-comparison-regime-distinction)),
+the expected delta from cross-seed and cross-split variation is a few
+tenths of a PPL unit — consistent with the range observed in
+[§A1](#a1-cotformer--reserved-layers-perplexity-table-2-40k-steps) (+0.13)
+and [§A2](#a2-ln-cotformer-perplexity-table-2-40k-steps) (+0.02). Any
+delta larger than ~2–3× the per-batch CI95 half-width is treated as
+meaningful evidence of a systematic effect rather than sampling noise;
+candidates for attribution include the micro-batch decomposition
+([§B3](#b3-micro-batch-size-hardware-constrained)) and effective batch
+size ([§B5](#b5-base-model-batch-size)) divergences.
+
+### Training configuration
+
+All seven ablations are trained using the shared configuration of
+[§M4](#m4-training-configuration-shared-across-variants) for 40,000
+steps. The architecture is `cotformer_full_depth` in every case, with
+`n_layer_begin=0` and `n_layer_end=0` — this is the basic CoTFormer
+(no reserved prefix or suffix layers). It is distinct from the
+`2→21×5→1` layer allocation used by the "+ Reserved Layers" variant
+([§A1](#a1-cotformer--reserved-layers-perplexity-table-2-40k-steps)) and
+the LN-CoTFormer ([§A2](#a2-ln-cotformer-perplexity-table-2-40k-steps));
+those use `n_layer_begin=2, n_layer_end=1`. Table 1 reports the basic
+CoTFormer without reserved layers, so `n_layer_begin=0, n_layer_end=0`
+is the correct configuration for this replication. The `n_repeat` value
+varies per ablation ({2, 3, 5} for both 12L and 24L; plus 15 for 12L
+only). Training packages live under `iridis/reproduce-table1-fig23/`.
+
+### Evaluation configuration
+
+Evaluation follows [§M2](#m2-evaluation-protocol): standalone `eval.py`
+on a single L4 GPU, `--distributed_backend None`, iterating the OWT2
+`val.bin` in contiguous windows. The script defaults used are
+`sequence_length=256` and `batch_size=32`; see
+`scripts/reproduce_table1_fig2.py` for the exact invocation. Evaluation
+is batch-size-independent ([§B11](#b11-evaluation-batch-size-independence)),
+so the `batch_size=32` choice (larger than the `batch_size=8` used in
+earlier A-section runs) does not affect reported perplexity values.
+
+### Uncertainty interpretation
+
+Paper Table 1 reports SEM across three independently trained seeds
+(e.g., "27.55(0.02)" for CoTFormer 12×2). We have **one seed per
+ablation** and therefore cannot construct our own inter-seed SEM. Our
+uncertainty is the `val_perplexity_ci95` from `eval.py`, which is
+derived from per-batch losses — a measure of intra-run cross-batch
+variance for one fixed model. As discussed in
+[§M3](#m3-confidence-intervals-and-the-papers-sem), these two quantities
+answer different statistical questions and are not directly comparable.
+The per-batch CI95 half-width is typically smaller than the inter-seed
+SEM at this model scale, so a delta larger than 2–3× the CI95 half-width
+provides meaningful evidence of a systematic difference beyond training
+noise.
+
+### Coverage: ours vs paper-reported reference
+
+The table below records which cells of Table 1 are retrained by us and
+which are carried over from the paper.
+
+| Model | n_layer | n_repeat | Source |
+|-------|---------|----------|--------|
+| CoTFormer | 12 | 2 | **ours** (BaseCot_12L_2R) |
+| CoTFormer | 12 | 3 | **ours** (BaseCot_12L_3R) |
+| CoTFormer | 12 | 5 | **ours** (BaseCot_12L_5R) |
+| CoTFormer | 12 | 15 | **ours** (BaseCot_12L_15R — used in Fig 2; not a Table 1 column) |
+| CoTFormer | 24 | 2 | **ours** (BaseCot_24L_2R) |
+| CoTFormer | 24 | 3 | **ours** (BaseCot_24L_3R) |
+| CoTFormer | 24 | 5 | **ours** (BaseCot_24L_5R) |
+| Block Universal Transformer | 12 | {2, 3, 5} | paper-reported reference |
+| Block Universal Transformer | 24 | {2, 3, 5} | paper-reported reference |
+| Standard Transformer | 12, 24, 48 | 1 | paper-reported reference |
+
+**Cross-references:**
+[§M2](#m2-evaluation-protocol) (eval protocol),
+[§M3](#m3-confidence-intervals-and-the-papers-sem) (CI interpretation),
+[§M4](#m4-training-configuration-shared-across-variants) (shared training config),
+[§M6](#m6-reproduction-fidelity-vs-fair-comparison-regime-distinction) (fair-comparison regime),
+[§B1](#b1-trainval-split-divergence) (split divergence),
+[§B3](#b3-micro-batch-size-hardware-constrained) (micro-batch),
+[§B5](#b5-base-model-batch-size) (effective batch size).
+
+---
+
+## A9. Figure 2 — accuracy–compute tradeoff (partial replication)
+
+Figure 2 plots perplexity vs MACs for CoTFormer and Block Universal
+Transformer at both n_layer=12 (subplot a, log-x scale) and n_layer=24
+(subplot b, linear-x scale), evaluated at sequence length 256.
+
+### Reproduction strategy
+
+The y-axis (perplexity) for CoTFormer points comes directly from our
+trained checkpoints, evaluated via the same pipeline as
+[§A8](#a8-table-1--cotformer-rows-40k-steps--partial-replication). BUT
+perplexity values are paper-reported (those checkpoints were not
+retrained); for those points, the y-coordinate is borrowed from the
+paper while the x-coordinate (MACs) is computed analytically.
+
+The x-axis (MACs) for **all** points — both CoTFormer and BUT — is
+computed analytically via `ptflops` (`aten` backend) applied to
+synthetic model configs constructed from the paper-stated
+hyperparameters: `n_head=12`, `n_embd=768`, `vocab_size=50304`,
+`positional_encoder=rotary`, `bias=False`, `sequence_length=256`. No
+trained weights are required for MAC counts; only the architecture
+hyperparameters matter. The MACs are produced by
+`scripts/compute_macs.py` and stored in `macs.json` (see
+`docs/schema_table1_fig23.md`). This means that even though we lack
+BUT checkpoints, the x-axis positions of BUT points are independently
+verified — only their y-axis (perplexity) is borrowed from the paper.
+
+### Extra points beyond Table 1
+
+Figure 2(a) contains BUT 12×6 and 12×15 data points that do not appear
+in Table 1. The perplexity values for these two points are read
+visually from the paper figure to approximately ±0.05 PPL precision;
+they are stored as `ppl_visual` in the `paper_reference_fig2` block of
+`results_table1_fig2.json` (see `docs/schema_table1_fig23.md`) to flag
+that this approximation is not as precise as a checkpoint eval. The
+CoTFormer 12×15 point in Figure 2(a) is produced by our
+`BaseCot_12L_15R` checkpoint and is therefore an honest eval result,
+not a visual read-off.
+
+### Visual style
+
+Verbatim reproduction is attempted: matplotlib serif font
+(`rcParams["font.family"] = "serif"`, `rcParams["mathtext.fontset"] = "cm"`
+to match the paper's Times-like rendering), colors `#1f77b4` (BUT) and
+`#2ca02c` (CoTFormer), solid lines with circular markers, per-point
+text labels formatted as `f"{n_layer}x{n_repeat}"`. Subplots (a) and (b)
+are saved separately as `fig2a.png` and `fig2b.png` (plus PDF) at
+200 dpi. Style constants are the single source of truth in
+`docs/schema_table1_fig23.md` § Color and style conventions; the plot
+script imports them and does not redefine them.
+
+**Cross-references:**
+[§A8](#a8-table-1--cotformer-rows-40k-steps--partial-replication) (perplexity values),
+[§A10](#a10-figure-3--compute-cost-vs-sequence-length-analytical-only-reproduction) (same MAC computation pipeline),
+[§M3](#m3-confidence-intervals-and-the-papers-sem) (CI interpretation for CoTFormer points).
+
+---
+
+## A10. Figure 3 — compute cost vs sequence length (analytical-only reproduction)
+
+Figure 3 compares the MAC count of CoTFormer 12×3 against Block Universal
+Transformer 12×5 across sequence lengths {128, 256, 512, 1024, 2048,
+4096, 8192, 12288}. No checkpoint evaluation is involved: the figure
+depends only on architecture-derived FLOP counts, not on trained weights
+or val-set perplexity.
+
+### Method
+
+`scripts/compute_macs.py` constructs a CoTFormer (and BUT) model from a
+synthetic config via `config.parse_args_with_format`, overriding
+`n_layer`, `n_repeat`, and `sequence_length` for each point in the sweep.
+It then calls `ptflops.get_model_complexity_info` with the `aten` backend,
+recreating the attention bias buffer at each `seq_len` to ensure the
+quadratic attention term scales correctly (following the pattern in
+`get_ppl_per_mac.py:get_macs_for_seqlens`). The resulting MAC values are
+written to `macs.json`; `results_fig3.json` is a reshaped subset covering
+only the two curves needed for Fig 3 (see `docs/schema_table1_fig23.md`).
+The x-axis in Fig 3 is log-scale; the plot script reads `results_fig3.json`
+and does not recompute MACs.
+
+### Expected outcome and significance
+
+The CoTFormer 12×3 curve should remain below the BUT 12×5 curve across
+the entire sequence-length range up to 12,288 — this is the paper's
+qualitative claim. The quantitative MAC values should match the paper's
+reported values to within `ptflops`' arithmetic precision (rounding of
+multiply-accumulate counts at the operator level).
+
+Reproducing this figure analytically is meaningful even without
+retraining, for three reasons. First, it confirms that we constructed
+the CoTFormer and BUT architectures with matching hyperparameters to the
+paper — a mismatch would shift one curve relative to the other and break
+the qualitative ordering. Second, it verifies that the paper's reported
+compute ratios are consistent with those hyperparameters. Third, it
+establishes that the qualitative claim ("CoTFormer 12×3 has lower compute
+than BUT 12×5 even at seq_len=8192") holds under an independent
+analytical reconstruction, strengthening confidence in the paper's
+architecture comparisons beyond what any single perplexity number can
+provide.
+
+**Cross-references:**
+[§A8](#a8-table-1--cotformer-rows-40k-steps--partial-replication) (the CoTFormer 12×3 checkpoint whose perplexity appears in Table 1 and Fig 2),
+[§A9](#a9-figure-2--accuracycompute-tradeoff-partial-replication) (the same MAC computation pipeline, at seq_len=256 only).
 
 ---
 
@@ -2019,6 +2240,65 @@ annealing from the original codebase (specifically
 the authors' implementation exactly. The paper's "8000 steps" claim
 is accurate for the 40k scope of Section 3.2 but should not be
 extrapolated to Section 4.2's 60k runs.
+
+---
+
+## C4. `eval.py` perplexity uses truncated `e` (2.71828) instead of `math.e` — Original Code Quirk
+
+### What the code does
+
+`eval.py:140` computes the point-estimate perplexity as:
+
+```python
+stats['val_perplexity'] = 2.71828 ** stats['val_loss']
+```
+
+Lines 155-156 of the same file compute the CI95 endpoints using the
+correct constant:
+
+```python
+ppl_lo = math.e ** stats['val_loss_ci95'][0]
+ppl_hi = math.e ** stats['val_loss_ci95'][1]
+```
+
+The point estimate and the CI bounds therefore use different bases.
+This is a quirk of the original codebase (commit `2723e30`), not
+something introduced during our reproduction.
+
+### Numerical impact
+
+`math.e = 2.718281828...` ; the truncated literal is `2.71828`.
+The relative error per unit of loss is
+`log(2.71828) − log(math.e) ≈ −6.7 × 10⁻⁷`. At a representative
+`val_loss ≈ 3.3` (PPL ≈ 27), the absolute PPL discrepancy is
+approximately `27 × 3.3 × 6.7 × 10⁻⁷ ≈ 6 × 10⁻⁵`. This is four
+orders of magnitude below the paper's smallest reported SEM (0.00 in
+Table 1 for Standard 48L) and well below any delta discussed in this
+document. It does not affect any reported conclusion.
+
+The CI endpoints computed via `math.e` are internally consistent with
+each other but not with the point estimate. For a PPL of ~27 the
+resulting asymmetry in half-widths is at the sixth decimal place and
+is invisible at the precision we report.
+
+### Why we preserve it
+
+This reproduction uses the project's existing `eval.py` pipeline
+unchanged to maintain parity across all reproduced variants. Replacing
+`2.71828` with `math.exp(loss)` would shift every reported PPL by
+approximately −6 × 10⁻⁵, contaminating "delta = ours − paper"
+comparisons with a non-experimental confound. The cost of preserving
+the quirk is a sub-micron PPL error; the cost of patching it silently
+is a systematic bias in delta attribution.
+
+### Recommendation
+
+If the evaluation pipeline is rewritten, use `math.exp(stats['val_loss'])`
+(or equivalently `math.e ** stats['val_loss']`) throughout for internal
+consistency. The current truncation is a code smell with no material
+numerical impact.
+
+**Cross-references:** [§M3](#m3-confidence-intervals-and-the-papers-sem) (CI interpretation and the distinct statistical populations sampled by each uncertainty quantity).
 
 ---
 
