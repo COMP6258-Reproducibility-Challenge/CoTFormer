@@ -356,61 +356,111 @@ print(f"[OK] Effective batch size = {eff_batch} (paper spec: 128)")
 
 
 # %% tags=["quarantine-check"]
-# Quarantine check — ensure target ckpt dir has no stale n_head=24 artifacts
-#
-# Strategy: read summary.json (written by main.py at training end/resume)
-# rather than probing ckpt keys. save_checkpoint() stores only
-# {model, optimizer, scheduler, itr} — it does NOT store model_args or args.
-# summary.json stores vars(args), so summary["args"]["n_head"] is canonical.
-import os
-import glob
-import json
-import datetime
+# Phase 5b airtight quarantine: accepts started.json (mid-training resume) OR summary.json (completed).
+# Refuses if ckpts exist with NEITHER marker (stale-from-iridis silent-load risk).
+import json, os, datetime
 
-CKPT_DIR = os.path.join(RESULTS_BASE, "owt2", "cotformer_full_depth", EXP_NAME)
-date_str = datetime.datetime.now().strftime("%Y%m%d")
+CKPT_DIR = f"{RESULTS_BASE}/owt2/cotformer_full_depth/{EXP_NAME}"
+date = datetime.datetime.now().strftime("%Y%m%d")
+
+def _fail(msg):
+    raise RuntimeError(msg)
 
 if not os.path.exists(CKPT_DIR):
-    print(f"[OK] Fresh start — target dir does not exist yet.")
-    print(f"     Will be created at: {CKPT_DIR}")
+    print(f"[OK] No ckpt dir at {CKPT_DIR} — fresh start.")
 else:
-    ckpt_files = (
-        sorted(glob.glob(os.path.join(CKPT_DIR, "ckpt_*.pt")))
-        + ([os.path.join(CKPT_DIR, "ckpt.pt")] if os.path.exists(os.path.join(CKPT_DIR, "ckpt.pt")) else [])
-    )
-    summary_path = os.path.join(CKPT_DIR, "summary.json")
+    entries = os.listdir(CKPT_DIR)
+    ckpt_files = [f for f in entries if f.startswith("ckpt_") and f.endswith(".pt")]
+    has_final = "ckpt.pt" in entries
+    summary_path = f"{CKPT_DIR}/summary.json"
+    marker_path = f"{CKPT_DIR}/started.json"
+    has_summary = os.path.exists(summary_path)
+    has_marker = os.path.exists(marker_path)
+    has_any_ckpt = bool(ckpt_files) or has_final
 
-    if not ckpt_files and not os.path.exists(summary_path):
-        print(f"[OK] Target dir exists but contains no checkpoints or summary — clean state.")
-    elif os.path.exists(summary_path):
+    if not has_any_ckpt and not has_summary and not has_marker:
+        print(f"[OK] Empty dir {CKPT_DIR} — fresh start.")
+    elif has_summary:
         with open(summary_path) as f:
-            summary = json.load(f)
-        n_head_saved = summary.get("args", {}).get("n_head", None)
-        if n_head_saved is None:
-            raise RuntimeError(
-                f"[HARD FAIL] summary.json exists but has no args.n_head field.\n"
-                f"Cannot verify ckpt provenance. Manually quarantine:\n"
-                f"  mv '{CKPT_DIR}' '{CKPT_DIR}_UNVERIFIED_{date_str}'\n"
-                f"Then re-run this cell."
+            saved = json.load(f).get("args", {})
+        saved_n_head = saved.get("n_head")
+        if saved_n_head != 12:
+            _fail(
+                f"STALE summary.json shows n_head={saved_n_head}; this retrain requires n_head=12.\n"
+                f"Quarantine:\n  mv {CKPT_DIR} {CKPT_DIR}_STALE_n{saved_n_head}_{date}\nThen re-run."
             )
-        if int(n_head_saved) != 12:
-            raise RuntimeError(
-                f"[HARD FAIL] Stale ckpt detected: summary.json shows n_head={n_head_saved}, "
-                f"but this retrain requires n_head=12.\n"
-                f"Quarantine the stale directory:\n"
-                f"  mv '{CKPT_DIR}' '{CKPT_DIR}_STALE_n{n_head_saved}_{date_str}'\n"
-                f"Then re-run this cell. Training will start fresh."
+        print(f"[OK] summary.json confirms n_head=12 (completed run; main.py will extend if --iterations > prev).")
+    elif has_marker:
+        with open(marker_path) as f:
+            marker = json.load(f)
+        marker_n_head = marker.get("n_head")
+        marker_abl = marker.get("ablation")
+        if marker_n_head != 12:
+            _fail(
+                f"STALE started.json shows n_head={marker_n_head}; quarantine: mv {CKPT_DIR} {CKPT_DIR}_STALE_n{marker_n_head}_{date}"
             )
-        print(f"[OK] summary.json confirms n_head={n_head_saved} — safe to resume from partial ckpt.")
+        if marker_abl != ABLATION:
+            _fail(
+                f"started.json's ablation={marker_abl} does NOT match current ABLATION={ABLATION}.\n"
+                f"Did you switch ABLATION in cell 2 between runs?\n"
+                f"Quarantine and start fresh:\n  mv {CKPT_DIR} {CKPT_DIR}_WRONG_ABLATION_{date}"
+            )
+        print(f"[OK] started.json: n_head=12, ablation={marker_abl}, started {marker.get('first_started_at')} — safe to resume.")
     else:
-        # Ckpt files exist but no summary.json — cannot verify provenance
-        raise RuntimeError(
-            f"[HARD FAIL] Cannot verify ckpt provenance — summary.json missing.\n"
-            f"Refusing to resume to avoid silently loading a stale n_head=24 ckpt.\n"
-            f"Manually quarantine:\n"
-            f"  mv '{CKPT_DIR}' '{CKPT_DIR}_UNVERIFIED_{date_str}'\n"
-            f"Then re-run this cell."
+        _fail(
+            f"REFUSE TO RESUME: ckpts exist in {CKPT_DIR} but NEITHER summary.json NOR started.json present.\n"
+            f"Cannot verify provenance — could be silently-loaded stale n_head=24 ckpt (state_dict shapes match n_head=12 by accident at main.py:193).\n"
+            f"Manually quarantine:\n  mv {CKPT_DIR} {CKPT_DIR}_UNVERIFIED_{date}\nThen re-run."
         )
+
+
+
+# %% tags=["ckpt-integrity-check"]
+# Phase 5b ckpt integrity sweep: handles partial Drive-writes from Colab kill mid-torch.save.
+# Renames un-loadable ckpts to .PARTIAL so main.py's --use_pretrained auto skips them
+# (otherwise main.py:155-160 catches corruption but starts FRESH, losing all valid prior ckpts).
+import os, re, torch
+
+CKPT_DIR = f"{RESULTS_BASE}/owt2/cotformer_full_depth/{EXP_NAME}"
+
+if not os.path.exists(CKPT_DIR):
+    print("[OK] No ckpt dir yet — nothing to integrity-check.")
+else:
+    pattern = re.compile(r"^ckpt_(\d+)\.pt$")
+    candidates = []
+    for f in os.listdir(CKPT_DIR):
+        m = pattern.match(f)
+        if m:
+            candidates.append((int(m.group(1)), f))
+    candidates.sort(reverse=True)  # highest-iter first
+
+    if not candidates:
+        # Also try the final ckpt.pt (post-training)
+        if os.path.exists(f"{CKPT_DIR}/ckpt.pt"):
+            print(f"[OK] Final ckpt.pt present — completed run.")
+        else:
+            print(f"[OK] No ckpt_*.pt files in {CKPT_DIR} — fresh start expected.")
+    else:
+        valid = None
+        demoted = []
+        for step, fname in candidates:
+            path = f"{CKPT_DIR}/{fname}"
+            try:
+                _ = torch.load(path, map_location="cpu", weights_only=False)
+                valid = (step, fname)
+                break
+            except Exception as e:
+                new_name = f"{path}.PARTIAL"
+                os.rename(path, new_name)
+                demoted.append(fname)
+                print(f"[WARN] Demoted partial ckpt {fname} → {fname}.PARTIAL ({type(e).__name__}: {str(e)[:80]})")
+
+        if valid:
+            step, fname = valid
+            print(f"[OK] Will resume from {fname} (step {step}). {len(demoted)} partial ckpt(s) demoted.")
+        else:
+            print(f"[WARN] ALL {len(candidates)} ckpts were corrupt — main.py will start fresh from step 0.")
+            print(f"      If unexpected: inspect /content/drive/MyDrive/.../{EXP_NAME}/*.PARTIAL files manually.")
 
 
 # %% tags=["calibration"]
@@ -513,6 +563,33 @@ else:
 
 
 # %% tags=["train"]
+# Phase 5b: write session marker BEFORE main.py invocation.
+# Quarantine-check uses started.json (mid-training resume gate) since
+# main.py only writes summary.json on completion (main.py:223-226).
+import json, datetime, os
+CKPT_DIR = f"{RESULTS_BASE}/owt2/cotformer_full_depth/{EXP_NAME}"
+os.makedirs(CKPT_DIR, exist_ok=True)
+MARKER = f"{CKPT_DIR}/started.json"
+if not os.path.exists(MARKER):
+    payload = {
+        "n_head": N_HEAD,
+        "n_layer": cfg["n_layer"],
+        "n_repeat": cfg["n_repeat"],
+        "min_repeat": cfg["min_repeat"],
+        "exp_name": EXP_NAME,
+        "ablation": ABLATION,
+        "first_started_at": datetime.datetime.now().isoformat(),
+    }
+    tmp = f"{MARKER}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(tmp, MARKER)  # atomic on POSIX; Drive FUSE honors rename
+    print(f"[INFO] Wrote session marker: {MARKER}")
+else:
+    with open(MARKER) as f:
+        payload = json.load(f)
+    print(f"[INFO] Existing marker: started_at={payload.get('first_started_at')}, n_head={payload.get('n_head')}, ablation={payload.get('ablation')}")
+
 # ============================================================
 # TRAINING — 40k-step paper-spec run
 # Re-running this cell after a session kill will RESUME from
@@ -573,7 +650,8 @@ print(f"CMD: {train_cmd}\n")
 get_ipython().system(train_cmd)
 
 
-# %% tags=["eval-ppl"] keep_output=true
+
+# %% keep_output=true tags=["eval-ppl"]
 # Evaluate perplexity on final checkpoint using eval.py
 # eval.py takes --checkpoint <dir or ckpt.pt path>
 import os
@@ -628,7 +706,7 @@ else:
 print(f"{'='*60}")
 
 
-# %% tags=["regen-fig2"] keep_output=true
+# %% keep_output=true tags=["regen-fig2"]
 # Regenerate Figure 2 (OPTIONAL — only runs if scripts/plot_fig2.py and required data exist)
 import os
 import subprocess
@@ -715,4 +793,34 @@ else:
 # | 12L_5R   | ~26.64    | 27.14        |
 # | 24L_3R   | ~24.85    | 25.35        |
 # | 24L_5R   | ~24.48    | 24.98        |
+#
+# * * *
+#
+# ## Going AFK / Resume Protocol
+#
+# **Before stepping away** (laptop sleep, commute, etc.):
+# 1. Verify the latest `ckpt_*.pt` step number is increasing on Drive (the FUSE-side files update; the cloud-side upload completes async).
+# 2. (Optional, recommended) In a fresh cell, run:
+#    ```python
+#    from google.colab import drive
+#    drive.flush_and_unmount()
+#    ```
+#    BEFORE closing the tab. This forces the FUSE layer to flush pending writes to Drive cloud. **Do not run this if you intend to keep the session active** -- it unmounts Drive.
+# 3. **DO NOT trust Pro+ Background Execution** to keep the session alive while AFK. Per googlecolab/colabtools issues #5793 / #5950, sessions are currently terminating within 40 min to 1 h of browser close even with Pro+. Plan for the runtime to die.
+#
+# **Resuming at home**:
+# 1. Open the notebook fresh in Colab (File > Open notebook > GitHub > your fork).
+# 2. Confirm `ABLATION` and `REPO_URL` in cell 2 are still correct (they should persist via the .ipynb on GitHub).
+# 3. **Run All** (Ctrl+F9). Order matters and is automatic:
+#    - `quarantine-check` reads `started.json` from Drive, validates `n_head==12` + `ablation` matches -> PASS.
+#    - `ckpt-integrity-check` finds the latest non-partial ckpt; demotes any `*.PARTIAL` siblings caused by interrupted writes.
+#    - `calibration` re-projects wall time (will project the REMAINING time, since main.py will resume).
+#    - `train` invokes `main.py --use_pretrained auto` -> picks the highest-step VALID `ckpt_*.pt` (integrity-checked) -> resumes from `checkpoint['itr']`.
+# 4. Watch `train.log` for the resume confirmation line: `Resuming from ckpt_NNNNN.pt`. If you see `WARN: No checkpoint found ... starting fresh` BUT you expected a resume, **STOP** -- the integrity sweep may have demoted everything; inspect the `*.PARTIAL` files before letting it overwrite.
+#
+# **Sanity invariants** to spot-check at any point:
+# - Drive `.../{EXP_NAME}/started.json` shows `n_head: 12`.
+# - Drive `.../{EXP_NAME}/ckpt_*.pt` step numbers are monotonically increasing.
+# - `train.log` line count grows (we use `tee -a`, never overwrite).
+# - `summary.json` appears ONLY after all 40k iters complete (don't worry if it's absent during training).
 #
