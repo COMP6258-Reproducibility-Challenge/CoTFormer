@@ -195,7 +195,9 @@ def main(args):
     model = models.make_model_from_args(args).to(args.device)
 
     if args.checkpoint is not None:
-        checkpoint = torch.load(os.path.join(args.checkpoint, args.checkpoint_filename))
+        # weights_only=False: same rationale as main.py:156 — our checkpoints embed
+        # numpy RNG state via _reconstruct which is not in PyTorch 2.6+ safe globals.
+        checkpoint = torch.load(os.path.join(args.checkpoint, args.checkpoint_filename), weights_only=False)
         model.load_state_dict({x: y for x, y in checkpoint['model'].items() if "attn.bias" not in x and "wpe" not in x}, strict=False)
 
     model = distributed_backend.transform_model(model)

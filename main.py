@@ -153,7 +153,11 @@ def main(args):
         last_ckpt_path = args.use_pretrained
         print(f"Resuming from {last_ckpt_path}")
         try:
-            checkpoint = torch.load(os.path.join(ckpt_path, last_ckpt_path), map_location=args.device)
+            # weights_only=False: checkpoint contains numpy RNG state (np.random.get_state())
+            # pickled via numpy._core.multiarray._reconstruct, which PyTorch 2.6+ rejects under
+            # the new weights_only=True default. RNG restore is load-bearing for resume
+            # reproducibility (see optim/base.py:65-80) — we trust our own checkpoints.
+            checkpoint = torch.load(os.path.join(ckpt_path, last_ckpt_path), map_location=args.device, weights_only=False)
         except (RuntimeError, EOFError) as e:
             print(f"WARN: Corrupted checkpoint {last_ckpt_path}: {e}")
             print("Starting fresh.")
