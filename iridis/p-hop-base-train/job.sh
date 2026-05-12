@@ -4,9 +4,9 @@
 #SBATCH --account=ecsstudents
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
-#SBATCH --mem=8G
+#SBATCH --cpus-per-task=16
+#SBATCH --gres=gpu:2
+#SBATCH --mem=16G
 #SBATCH --time=24:00:00
 ################################################################################
 # Standard Transformer p-hop induction baseline.
@@ -22,21 +22,22 @@
 
 TASK="${TASK:-phop_p8_seq256_a4_final}"
 MODEL_NAME="base"
-N_GPUS=1
-N_LAYER=4
+N_GPUS="${N_GPUS:-2}"
+CPUS_PER_TASK="${CPUS_PER_TASK:-16}"
+N_LAYER="${N_LAYER:-1}"
 N_EMBD="${N_EMBD:-128}"
-N_HEAD="${N_HEAD:-4}"
-ITERATIONS="${ITERATIONS:-5000}"
-BATCH_SIZE="${BATCH_SIZE:-8}"
-ACC_STEPS="${ACC_STEPS:-16}"
-CKPT_FREQ="${CKPT_FREQ:-100}"
-EVAL_FREQ="${EVAL_FREQ:-100}"
-TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
-EVAL_SPLITS="${EVAL_SPLITS:-val test}"
+N_HEAD="${N_HEAD:-8}"
+ITERATIONS="${ITERATIONS:-250000}"
+BATCH_SIZE="${BATCH_SIZE:-32}"
+ACC_STEPS="${ACC_STEPS:-4}"
+CKPT_FREQ="${CKPT_FREQ:-4000}"
+EVAL_FREQ="${EVAL_FREQ:-4000}"
+TRAIN_SPLIT="${TRAIN_SPLIT:-train_constructive}"
+EVAL_SPLITS="${EVAL_SPLITS:-val_constructive test_constructive}"
 SEED="${SEED:-0}"
-BEST_SPLIT="${BEST_SPLIT:-val}"
+BEST_SPLIT="${BEST_SPLIT:-val_constructive}"
 BEST_METRIC="${BEST_METRIC:-acc}"
-BIG_EVAL_SPLITS="${BIG_EVAL_SPLITS:-val test}"
+BIG_EVAL_SPLITS="${BIG_EVAL_SPLITS:-val_constructive test_constructive}"
 BIG_EVAL_MAX_BATCHES="${BIG_EVAL_MAX_BATCHES:-}"
 
 # ========================= END CONFIGURATION ================================
@@ -59,12 +60,14 @@ if [ -z "$SLURM_JOB_ID" ]; then
     echo "  Width:     d=$N_EMBD h=$N_HEAD"
     echo "  Layers:    $N_LAYER"
     echo "  Steps:     $ITERATIONS"
-    echo "  Eff. BS:   $((BATCH_SIZE * ACC_STEPS))"
+    echo "  Eff. BS:   $((BATCH_SIZE * ACC_STEPS * N_GPUS)) global ($((BATCH_SIZE * ACC_STEPS)) per GPU)"
     echo "  Logs:      $RUN_DIR/"
     echo ""
     exec sbatch \
         --output="$RUN_DIR/slurm_%j.out" \
         --error="$RUN_DIR/slurm_%j.err" \
+        --cpus-per-task="$CPUS_PER_TASK" \
+        --gres="gpu:${N_GPUS}" \
         --mail-type=BEGIN,END,FAIL \
         --mail-user="$NOTIFY_EMAIL" \
         --export=ALL,REPO_DIR="$REPO_DIR",RUN_DIR="$RUN_DIR" \
@@ -122,7 +125,7 @@ echo " Model:         $MODEL_NAME"
 echo " Width:         d=$N_EMBD h=$N_HEAD"
 echo " Architecture:  ${N_LAYER}L"
 echo " Iterations:    $ITERATIONS"
-echo " Eff. BS:       $((BATCH_SIZE * ACC_STEPS))"
+echo " Eff. BS:       $((BATCH_SIZE * ACC_STEPS * N_GPUS)) global ($((BATCH_SIZE * ACC_STEPS)) per GPU)"
 echo " Checkpoint:    every $CKPT_FREQ steps -> $EXPS_DIR"
 echo " Data dir:      $PHOP_DATA_DIR"
 echo " Run dir:       $RUN_DIR"
@@ -154,6 +157,18 @@ if [ -n "$BIG_EVAL_MAX_BATCHES" ]; then
     BIG_EVAL_ARGS+=(--phop_big_eval_max_batches "$BIG_EVAL_MAX_BATCHES")
 fi
 
+EXTRA_ARGS=("$@")
+for ((ARG_IDX = 0; ARG_IDX < ${#EXTRA_ARGS[@]}; ARG_IDX++)); do
+    case "${EXTRA_ARGS[$ARG_IDX]}" in
+        --seed|--data_seed)
+            NEXT_IDX=$((ARG_IDX + 1))
+            if [ "$NEXT_IDX" -lt "${#EXTRA_ARGS[@]}" ] && [ -z "${EXTRA_ARGS[$NEXT_IDX]}" ]; then
+                EXTRA_ARGS[$NEXT_IDX]="$SEED"
+            fi
+            ;;
+    esac
+done
+
 TRAIN_ARGS=(
     --config_format base
     --model "$MODEL_NAME"
@@ -167,12 +182,12 @@ TRAIN_ARGS=(
     --iterations "$ITERATIONS"
     --dataset owt2
     --lr 1e-3
-    --weight_decay 0.1
-    --warmup_percent 0.2
+    --weight_decay 0.0
+    --warmup_percent 0.02
     --eval_freq "$EVAL_FREQ"
     --seed "$SEED"
     --results_base_folder "$EXPS_DIR"
-    --exp_name "phop_${TASK}_${MODEL_NAME}_${N_LAYER}layer_d${N_EMBD}_h${N_HEAD}_bs${BATCH_SIZE}x${ACC_STEPS}_seed${SEED}"
+    --exp_name "constructive_phop_${TASK}_${MODEL_NAME}_${N_LAYER}layer_d${N_EMBD}_h${N_HEAD}_bs${BATCH_SIZE}x${ACC_STEPS}_seed${SEED}"
     --use_pretrained auto
     --phop_task "$TASK"
     --phop_data_root "$DATA_DIR/p-hop"
@@ -185,7 +200,7 @@ TRAIN_ARGS=(
     --phop_log_every 100
     --wandb
     --wandb_project rcotformer
-    "$@"
+    "${EXTRA_ARGS[@]}"
 )
 
 if [ "$N_GPUS" -gt 1 ]; then

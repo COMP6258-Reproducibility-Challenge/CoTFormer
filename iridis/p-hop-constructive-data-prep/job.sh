@@ -4,8 +4,8 @@
 #SBATCH --account=ecsstudents
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=8G
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16G
 #SBATCH --time=02:00:00
 ################################################################################
 # Generate paper-style constructive p-hop JSONL splits under shared scratch.

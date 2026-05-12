@@ -269,6 +269,12 @@ def main(args):
     device_type = "cuda" if "cuda" in str(args.device) else "cpu"
     if device_type == "cuda":
         torch.cuda.set_device(args.device)
+    if not getattr(args, "phop_best_metric", None):
+        print_master(
+            distributed_backend,
+            "WARNING: empty --phop_best_metric; defaulting to acc.",
+        )
+        args.phop_best_metric = "acc"
     type_ctx = nullcontext() if device_type == "cpu" else torch.amp.autocast(
         device_type=device_type,
         dtype=args.dtype,

@@ -4,9 +4,9 @@
 #SBATCH --account=ecsstudents
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
-#SBATCH --mem=8G
+#SBATCH --cpus-per-task=16
+#SBATCH --gres=gpu:2
+#SBATCH --mem=16G
 #SBATCH --time=24:00:00
 ################################################################################
 # CoTFormer p-hop induction experiment.
@@ -21,25 +21,26 @@
 # ========================= CONFIGURATION ====================================
 
 TASK="${TASK:-phop_p8_seq256_a4_final}"
-N_GPUS=1
+N_GPUS=2
 N_LAYER=1
-N_REPEAT=4
+N_REPEAT=7
 N_LAYER_BEGIN=0
 N_LAYER_END=0
 N_EMBD="${N_EMBD:-128}"
-N_HEAD="${N_HEAD:-4}"
-ITERATIONS="${ITERATIONS:-5000}"
-BATCH_SIZE="${BATCH_SIZE:-8}"
-ACC_STEPS="${ACC_STEPS:-16}"
-CKPT_FREQ="${CKPT_FREQ:-100}"
-EVAL_FREQ="${EVAL_FREQ:-100}"
-TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
-EVAL_SPLITS="${EVAL_SPLITS:-val test}"
-SEED="${SEED:-0}"
-BEST_SPLIT="${BEST_SPLIT:-val}"
-BEST_METRIC="${BEST_METRIC:-acc}"
-BIG_EVAL_SPLITS="${BIG_EVAL_SPLITS:-val test}"
+N_HEAD="${N_HEAD:-8}"
+ITERATIONS="${ITERATIONS:-250000}"
+BATCH_SIZE="${BATCH_SIZE:-32}"
+ACC_STEPS="${ACC_STEPS:-4}"
+CKPT_FREQ="${CKPT_FREQ:-4000}"
+EVAL_FREQ="${EVAL_FREQ:-4000}"
+TRAIN_SPLIT="${TRAIN_SPLIT:-train_constructive}"
+EVAL_SPLITS="${EVAL_SPLITS:-val_constructive test_constructive}"
+BEST_SPLIT="${BEST_SPLIT:-val_constructive}"
+BIG_EVAL_SPLITS="${BIG_EVAL_SPLITS:-val_constructive test_constructive}"
 BIG_EVAL_MAX_BATCHES="${BIG_EVAL_MAX_BATCHES:-}"
+SEED="${SEED:-0}"
+BEST_METRIC="${BEST_METRIC:-acc}"
+
 
 # ========================= END CONFIGURATION ================================
 
@@ -172,12 +173,12 @@ TRAIN_ARGS=(
     --iterations "$ITERATIONS"
     --dataset owt2
     --lr 1e-3
-    --weight_decay 0.1
-    --warmup_percent 0.2
+    --weight_decay 0.0
+    --warmup_percent 0.02
     --eval_freq "$EVAL_FREQ"
     --seed "$SEED"
     --results_base_folder "$EXPS_DIR"
-    --exp_name "phop_${TASK}_fixed_cot_attn_${N_LAYER}layer_${N_REPEAT}repeat_d${N_EMBD}_h${N_HEAD}_bs${BATCH_SIZE}x${ACC_STEPS}_seed${SEED}"
+    --exp_name "bestchckp_test_constructive_phop_${TASK}_fixed_cot_attn_${N_LAYER}layer_${N_REPEAT}repeat_d${N_EMBD}_h${N_HEAD}_bs${BATCH_SIZE}x${ACC_STEPS}_seed${SEED}"
     --use_pretrained auto
     --phop_task "$TASK"
     --phop_data_root "$DATA_DIR/p-hop"
