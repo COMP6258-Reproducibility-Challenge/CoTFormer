@@ -1,5 +1,3 @@
-# notebook-skill: registered by `/notebook init`
-*.ipynb merge=jupytext-regen
 *.ipynb -diff
 *.ipynb text eol=lf
 *.py text eol=lf
