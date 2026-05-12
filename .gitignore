@@ -162,3 +162,7 @@ dmypy.json
 # Slurm files
 slurm_*.out
 slurm_*.err
+
+# notebook-skill: per-notebook lock files + per-project snapshots
+*.ipynb.lock
+.notebook/snapshots/

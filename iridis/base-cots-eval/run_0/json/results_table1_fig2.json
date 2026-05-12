@@ -1,0 +1,321 @@
+{
+  "schema_version": "1.0",
+  "metadata": {
+    "ckpt_root": "/scratch/ab3u21/exps/owt2/cotformer_full_depth",
+    "eval_date_utc": "2026-05-11T14:09:34.901068Z",
+    "torch_version": "2.2.0+cu118",
+    "git_commit": "8ef80ed5d8786b39fb81748a49634b0473a073ef",
+    "device": "cuda:0",
+    "notes": "Paper Table 1 reports SEM over 3 seeds. We have 1 seed per ablation; uncertainty is the per-batch CI95 from eval.py (different statistical interpretation \u2014 see reprod-notes \u00a7A8)."
+  },
+  "ablations": [
+    {
+      "name": "BaseCot_12L_2R",
+      "family": "CoTFormer",
+      "n_layer": 12,
+      "n_repeat": 2,
+      "model": "cotformer_full_depth",
+      "seed": 0,
+      "checkpoint_path": "/scratch/ab3u21/exps/owt2/cotformer_full_depth/BaseCot_12L_2R",
+      "checkpoint_filename": "ckpt.pt",
+      "eval": {
+        "val_loss": 3.3151767253875732,
+        "val_loss_std": 0.39012643694877625,
+        "val_loss_ci95": [
+          3.290923569374078,
+          3.3394298814010686
+        ],
+        "val_perplexity": 27.527196935436393,
+        "val_perplexity_ci95": [
+          26.867666354427058,
+          28.203043041661818
+        ],
+        "val_acc": 0.397178590297699,
+        "val_acc_std": 0.04373688995838165,
+        "n_batches": 994,
+        "sequence_length": 256,
+        "batch_size": 32,
+        "eval_per_batch_time_ms": 165.85644701836813
+      },
+      "macs_at_seq256": 47149056000
+    },
+    {
+      "name": "BaseCot_12L_3R",
+      "family": "CoTFormer",
+      "n_layer": 12,
+      "n_repeat": 3,
+      "model": "cotformer_full_depth",
+      "seed": 0,
+      "checkpoint_path": "/scratch/ab3u21/exps/owt2/cotformer_full_depth/BaseCot_12L_3R",
+      "checkpoint_filename": "ckpt.pt",
+      "eval": {
+        "val_loss": 3.297628879547119,
+        "val_loss_std": 0.3883056342601776,
+        "val_loss_ci95": [
+          3.2734889181482254,
+          3.321768840946013
+        ],
+        "val_perplexity": 27.048367746634742,
+        "val_perplexity_ci95": [
+          26.40329777704828,
+          27.709320616519463
+        ],
+        "val_acc": 0.39891621470451355,
+        "val_acc_std": 0.04337046295404434,
+        "n_batches": 994,
+        "sequence_length": 256,
+        "batch_size": 32,
+        "eval_per_batch_time_ms": 238.3761921638934
+      },
+      "macs_at_seq256": 72516206592
+    },
+    {
+      "name": "BaseCot_12L_5R",
+      "family": "CoTFormer",
+      "n_layer": 12,
+      "n_repeat": 5,
+      "model": "cotformer_full_depth",
+      "seed": 0,
+      "checkpoint_path": "/scratch/ab3u21/exps/owt2/cotformer_full_depth/BaseCot_12L_5R",
+      "checkpoint_filename": "ckpt.pt",
+      "eval": {
+        "val_loss": 3.491765022277832,
+        "val_loss_std": 0.4758465886116028,
+        "val_loss_ci95": [
+          3.470842015392897,
+          3.512688029162767
+        ],
+        "val_perplexity": 32.84378959169882,
+        "val_perplexity_ci95": [
+          32.163813472080626,
+          33.5382986517815
+        ],
+        "val_acc": 0.38348066806793213,
+        "val_acc_std": 0.04991094768047333,
+        "n_batches": 1987,
+        "sequence_length": 256,
+        "batch_size": 32,
+        "eval_per_batch_time_ms": 201.66839818949668
+      },
+      "macs_at_seq256": 126874386432
+    },
+    {
+      "name": "BaseCot_12L_15R",
+      "family": "CoTFormer",
+      "n_layer": 12,
+      "n_repeat": 15,
+      "model": "cotformer_full_depth",
+      "seed": 0,
+      "checkpoint_path": "/scratch/ab3u21/exps/owt2/cotformer_full_depth/BaseCot_12L_15R",
+      "checkpoint_filename": "ckpt.pt",
+      "eval": {
+        "val_loss": 3.265512466430664,
+        "val_loss_std": 0.5126410722732544,
+        "val_loss_ci95": [
+          3.249571663702658,
+          3.28145326915867
+        ],
+        "val_perplexity": 26.19347332168874,
+        "val_perplexity_ci95": [
+          25.779295344050386,
+          26.614422528205914
+        ],
+        "val_acc": 0.40339195728302,
+        "val_acc_std": 0.05899471044540405,
+        "n_batches": 3973,
+        "sequence_length": 256,
+        "batch_size": 32,
+        "eval_per_batch_time_ms": 325.5150595390614
+      },
+      "macs_at_seq256": 471142858752
+    },
+    {
+      "name": "BaseCot_24L_2R",
+      "family": "CoTFormer",
+      "n_layer": 24,
+      "n_repeat": 2,
+      "model": "cotformer_full_depth",
+      "seed": 0,
+      "checkpoint_path": "/scratch/ab3u21/exps/owt2/cotformer_full_depth/BaseCot_24L_2R",
+      "checkpoint_filename": "ckpt.pt",
+      "eval": {
+        "val_loss": 3.2301220893859863,
+        "val_loss_std": 0.3864210546016693,
+        "val_loss_ci95": [
+          3.2060992874516887,
+          3.254144891320284
+        ],
+        "val_perplexity": 25.282688604143548,
+        "val_perplexity_ci95": [
+          24.682618400958443,
+          25.89745992028733
+        ],
+        "val_acc": 0.40709882974624634,
+        "val_acc_std": 0.04436522349715233,
+        "n_batches": 994,
+        "sequence_length": 256,
+        "batch_size": 32,
+        "eval_per_batch_time_ms": 302.0957847476245
+      },
+      "macs_at_seq256": 94259478528
+    },
+    {
+      "name": "BaseCot_24L_3R",
+      "family": "CoTFormer",
+      "n_layer": 24,
+      "n_repeat": 3,
+      "model": "cotformer_full_depth",
+      "seed": 0,
+      "checkpoint_path": "/scratch/ab3u21/exps/owt2/cotformer_full_depth/BaseCot_24L_3R",
+      "checkpoint_filename": "ckpt.pt",
+      "eval": {
+        "val_loss": 3.4296987056732178,
+        "val_loss_std": 0.4741610884666443,
+        "val_loss_ci95": [
+          3.4088498103443627,
+          3.450547601002073
+        ],
+        "val_perplexity": 30.86726998295452,
+        "val_perplexity_ci95": [
+          30.230453500348663,
+          31.517646678965924
+        ],
+        "val_acc": 0.3904414474964142,
+        "val_acc_std": 0.05094492435455322,
+        "n_batches": 1987,
+        "sequence_length": 256,
+        "batch_size": 32,
+        "eval_per_batch_time_ms": 221.89267400406567
+      },
+      "macs_at_seq256": 144993779712
+    },
+    {
+      "name": "BaseCot_24L_5R",
+      "family": "CoTFormer",
+      "n_layer": 24,
+      "n_repeat": 5,
+      "model": "cotformer_full_depth",
+      "seed": 0,
+      "checkpoint_path": "/scratch/ab3u21/exps/owt2/cotformer_full_depth/BaseCot_24L_5R",
+      "checkpoint_filename": "ckpt.pt",
+      "eval": {
+        "val_loss": 3.4163687229156494,
+        "val_loss_std": 0.47271832823753357,
+        "val_loss_ci95": [
+          3.3955832658522556,
+          3.4371541799790433
+        ],
+        "val_perplexity": 30.458540313156764,
+        "val_perplexity_ci95": [
+          29.832048416651435,
+          31.098331865427987
+        ],
+        "val_acc": 0.39220336079597473,
+        "val_acc_std": 0.05063551664352417,
+        "n_batches": 1987,
+        "sequence_length": 256,
+        "batch_size": 32,
+        "eval_per_batch_time_ms": 384.7157851978949
+      },
+      "macs_at_seq256": 253710139392
+    }
+  ],
+  "paper_reference_table1": {
+    "standard_12L": {
+      "n_layer": 12,
+      "n_repeat": 1,
+      "ppl": 28.39,
+      "sem": 0.01
+    },
+    "block_universal_12L": {
+      "n_layer": 12,
+      "by_n_repeat": {
+        "2": {
+          "ppl": 27.74,
+          "sem": 0.01
+        },
+        "3": {
+          "ppl": 27.47,
+          "sem": 0.01
+        },
+        "5": {
+          "ppl": 27.15,
+          "sem": 0.02
+        }
+      }
+    },
+    "cotformer_12L_paper": {
+      "n_layer": 12,
+      "by_n_repeat": {
+        "2": {
+          "ppl": 27.55,
+          "sem": 0.02
+        },
+        "3": {
+          "ppl": 27.07,
+          "sem": 0.01
+        },
+        "5": {
+          "ppl": 26.64,
+          "sem": 0.04
+        }
+      }
+    },
+    "standard_24L": {
+      "n_layer": 24,
+      "n_repeat": 1,
+      "ppl": 25.93,
+      "sem": 0.02
+    },
+    "block_universal_24L": {
+      "n_layer": 24,
+      "by_n_repeat": {
+        "2": {
+          "ppl": 25.47,
+          "sem": 0.0
+        },
+        "3": {
+          "ppl": 25.19,
+          "sem": 0.03
+        },
+        "5": {
+          "ppl": 24.95,
+          "sem": 0.01
+        }
+      }
+    },
+    "cotformer_24L_paper": {
+      "n_layer": 24,
+      "by_n_repeat": {
+        "2": {
+          "ppl": 25.28,
+          "sem": 0.0
+        },
+        "3": {
+          "ppl": 24.85,
+          "sem": 0.04
+        },
+        "5": {
+          "ppl": 24.48,
+          "sem": 0.03
+        }
+      }
+    },
+    "standard_48L": {
+      "n_layer": 48,
+      "n_repeat": 1,
+      "ppl": 24.17,
+      "sem": 0.0
+    }
+  },
+  "paper_reference_fig2": {
+    "but_12L_extra": {
+      "6": {
+        "ppl_visual": 27.04
+      },
+      "15": {
+        "ppl_visual": 26.85
+      }
+    }
+  }
+}

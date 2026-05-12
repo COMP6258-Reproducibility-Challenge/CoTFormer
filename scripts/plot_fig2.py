@@ -144,12 +144,14 @@ def _plot_subplot(
     # Per-point text labels (slightly above marker)
     y_range = max(but_y + cot_y) - min(but_y + cot_y) if (but_y + cot_y) else 1.0
     offset = y_range * 0.025
+    # Per-point labels rendered in BLACK (not line color) for legibility — the
+    # line color is reserved for the marker; text reads against the page bg.
     for x, y, lbl in zip(but_x, but_y, but_labels):
         ax.annotate(lbl, (x, y), xytext=(0, 4), textcoords="offset points",
-                    fontsize=7, color=COLOR_BUT, ha="center", va="bottom")
+                    fontsize=7, color="black", ha="center", va="bottom")
     for x, y, lbl in zip(cot_x, cot_y, cot_labels):
         ax.annotate(lbl, (x, y), xytext=(0, 4), textcoords="offset points",
-                    fontsize=7, color=COLOR_COT, ha="center", va="bottom")
+                    fontsize=7, color="black", ha="center", va="bottom")
 
     if xlog:
         ax.set_xscale("log")
