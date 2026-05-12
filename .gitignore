@@ -164,5 +164,6 @@ slurm_*.out
 slurm_*.err
 
 # notebook-skill: per-notebook lock files + per-project snapshots
+.notebook/*
 *.ipynb.lock
 .notebook/snapshots/

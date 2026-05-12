@@ -11,7 +11,6 @@
 
 # %% tags=["notebook-runtime-probe"]
 # ---- runtime probe (single source of truth — emitted by /notebook init) ----
-# Per W5: prefer `"google.colab" in sys.modules` over `try/except import` —
 # no import side-effect, no ~50 ms compile cost.
 import os, sys
 from pathlib import Path
@@ -98,17 +97,19 @@ print(f"[notebook] runtime={RUNTIME}")
 # ============================================================
 import os
 
-ABLATION = "12L_5R"  # Bryan: keep this. Abe: change to "24L_3R"
+ABLATION = "24L_3R"  # Bryan: keep this.
 
-# EDIT ME: replace with the actual GitHub URL for this repo
-# e.g. "https://github.com/youruser/CoTFormer"
-REPO_URL = "<TODO_repo_url>"
+# replace with the actual GitHub URL for this repo
+REPO_URL = "https://github.com/COMP6258-Reproducibility-Challenge/CoTFormer.git"
 
+# NOTE: cotformer_full_depth ignores --min_repeat / --depth_random_method /
+# --depth_embedding (see iridis/base-train/job-template.sh:205-210, and
+# models/cotformer_full_depth.py:322 — always runs all n_repeat iterations).
+# They were previously passed and only polluted summary.json["args"]. Removed.
 ABLATION_CONFIGS = {
     "12L_5R": {
         "n_layer":     12,
         "n_repeat":     5,
-        "min_repeat":   5,
         "batch_size":  64,
         "acc_steps":    2,
         "exp_name":    "BaseCot_12L_5R",
@@ -117,7 +118,6 @@ ABLATION_CONFIGS = {
     "24L_3R": {
         "n_layer":     24,
         "n_repeat":     3,
-        "min_repeat":   3,
         "batch_size":  32,
         "acc_steps":    4,
         "exp_name":    "BaseCot_24L_3R",
@@ -126,7 +126,6 @@ ABLATION_CONFIGS = {
     "24L_5R": {
         "n_layer":     24,
         "n_repeat":     5,
-        "min_repeat":   5,
         "batch_size":  32,
         "acc_steps":    4,
         "exp_name":    "BaseCot_24L_5R",
@@ -154,7 +153,7 @@ WANDB_ARGS = "--wandb --wandb_project rcotformer" if _wandb_key else ""
 print(f"ABLATION  = {ABLATION}")
 print(f"EXP_NAME  = {EXP_NAME}")
 print(f"N_HEAD    = {N_HEAD}  (must be 12 — paper fix)")
-print(f"n_layer   = {cfg['n_layer']}, n_repeat={cfg['n_repeat']}, min_repeat={cfg['min_repeat']}")
+print(f"n_layer   = {cfg['n_layer']}, n_repeat={cfg['n_repeat']}")
 print(f"batch_size= {cfg['batch_size']}, acc_steps={cfg['acc_steps']}  (eff={cfg['batch_size']*cfg['acc_steps']})")
 print(f"DRIVE_ROOT        = {DRIVE_ROOT}")
 print(f"RESULTS_BASE      = {RESULTS_BASE}")
@@ -179,7 +178,7 @@ else:
 
 
 # %% tags=["gpu-assert"]
-# Assert A100 GPU — hard-fail on any other GPU type
+# Assert A100 GPU and sufficient system RAM — hard-fail on any deviation
 import subprocess
 import sys
 
@@ -199,8 +198,20 @@ if "google.colab" in __import__("sys").modules:
             f"Do NOT burn a training session on a {gpu_name} — wall-time projections will be wrong."
         )
     print(f"[OK] A100 confirmed. VRAM: {vram_str}")
+
+    # System RAM: --data_in_ram converts the memmap'd train.bin (~17GB uint16)
+    # into a numpy array in RAM, plus val.bin. Need >= 40GB system RAM to
+    # avoid OOM mid-training. Standard Colab runtimes ship 12-25GB; High-RAM ~83GB.
+    import psutil
+    ram_gb = psutil.virtual_memory().total / (1024**3)
+    if ram_gb < 40:
+        raise RuntimeError(
+            f"\n\n[HARD FAIL] System RAM is {ram_gb:.1f}GB — need >= 40GB for --data_in_ram.\n"
+            f"Switch to a high-RAM Colab runtime: Runtime > Change runtime type > High-RAM."
+        )
+    print(f"[OK] System RAM: {ram_gb:.1f}GB")
 else:
-    print("Not running on Colab — skipping GPU assertion (local validation mode).")
+    print("Not running on Colab — skipping GPU/RAM assertions (local validation mode).")
 
 
 # %% tags=["clone-repo"]
@@ -236,17 +247,27 @@ print(f"[OK] Requirements installed from {req_path}")
 
 
 # %% tags=["stage-data"]
-# Stage OWT2 dataset from Drive to local /content/data/ (idempotent)
-# Tarball layout: openwebtext2/{train.bin,val.bin,meta.pkl}
-# Extract target: /content/data/ → produces /content/data/openwebtext2/train.bin
+# Stage OWT2 dataset (idempotent + first-time bootstrap).
+# Three dispatch paths:
+#   A. Local train.bin AND val.bin already extracted -> skip everything.
+#   B. Tarball on Drive   -> copy to local disk, sha256-verify if sidecar
+#                            present, extract to /content/data/.
+#   C. Tarball MISSING    -> bootstrap: download HF OWT2 (~28GB), tokenise,
+#                            write train.bin + val.bin locally, then PACK and
+#                            COPY the tarball to Drive (with sha256 sidecar)
+#                            for future runs. ONE-TIME op only.
+#
+# Tarball layout: openwebtext2/{train.bin, val.bin}  (top-level = "openwebtext2")
 import os
+import sys
 import time
 import hashlib
 import subprocess
 
-# DATA_DIR = "/content/data"; openwebtext2.py appends "openwebtext2/" internally.
-# So train.bin lives one level deeper:
 TRAIN_BIN = f"{DATA_DIR}/openwebtext2/train.bin"
+VAL_BIN   = f"{DATA_DIR}/openwebtext2/val.bin"
+LOCAL_TAR = "/content/owt2.tar.gz"
+
 
 def _sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -255,66 +276,130 @@ def _sha256_file(path: str) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-if os.path.exists(TRAIN_BIN):
-    print(f"[OK] Dataset already staged at {TRAIN_BIN} — skipping extraction.")
-else:
-    # Wait for Drive mount to settle (FUSE inode cache can be slow)
-    print("Waiting for Drive mount to settle...")
-    deadline = time.time() + 60
+
+def _verify_sha256_if_sidecar(tarball_path: str) -> None:
+    sidecar = tarball_path + ".sha256"
+    if not os.path.exists(sidecar):
+        print(f"[WARN] No .sha256 sidecar at {sidecar} — skipping checksum verification.")
+        return
+    with open(sidecar) as f:
+        expected_sha = f.read().strip().split()[0]
+    print(f"Verifying sha256 (expected: {expected_sha[:16]}...)...")
+    actual_sha = _sha256_file(tarball_path)
+    if actual_sha != expected_sha:
+        raise RuntimeError(
+            f"[FAIL] sha256 mismatch on {tarball_path}\n"
+            f"  expected: {expected_sha}\n"
+            f"  actual:   {actual_sha}\n"
+            f"Re-upload the tarball, regenerate the sidecar, or remove the sidecar to skip this check."
+        )
+    print("[OK] sha256 verified.")
+
+
+def _extract_local_tarball(local_tar: str) -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    print(f"Extracting {local_tar} to {DATA_DIR}/ ...")
+    subprocess.check_call(["tar", "xzf", local_tar, "-C", f"{DATA_DIR}/"])
+
+
+def _wait_for_drive_tarball(timeout_s: int = 60) -> bool:
+    """Wait up to timeout_s for the Drive tarball to become visible.
+    Drive FUSE inode cache can lag fresh mounts. True if visible, False if not."""
+    deadline = time.time() + timeout_s
     while not os.path.exists(DATA_TARBALL_PATH):
         if time.time() > deadline:
-            raise RuntimeError(
-                f"[FAIL] Tarball not found after 60s: {DATA_TARBALL_PATH}\n"
-                f"Check DATA_TARBALL_PATH in the params cell."
-            )
+            return False
         print(f"  {DATA_TARBALL_PATH} not yet visible — retrying in 5s...")
         time.sleep(5)
+    return True
 
-    print(f"Found tarball: {DATA_TARBALL_PATH}")
 
-    # Verify sha256 sidecar if present
-    sidecar = DATA_TARBALL_PATH + ".sha256"
-    if os.path.exists(sidecar):
-        with open(sidecar) as f:
-            expected_sha = f.read().strip().split()[0]
-        print(f"Verifying sha256 (expected: {expected_sha[:16]}...)...")
-        actual_sha = _sha256_file(DATA_TARBALL_PATH)
-        if actual_sha != expected_sha:
-            raise RuntimeError(
-                f"[FAIL] sha256 mismatch on {DATA_TARBALL_PATH}\n"
-                f"  expected: {expected_sha}\n"
-                f"  actual:   {actual_sha}\n"
-                f"Re-upload the tarball or remove the sidecar to skip this check."
-            )
-        print(f"[OK] sha256 verified.")
-    else:
-        print(f"[WARN] No .sha256 sidecar found — skipping checksum verification.")
-
-    # Copy to local /content/ to avoid per-read Drive FUSE overhead during training
-    local_tar = "/content/owt2.tar.gz"
-    if not os.path.exists(local_tar):
-        print(f"Copying tarball to local disk: {local_tar}")
-        subprocess.check_call(["cp", DATA_TARBALL_PATH, local_tar])
-    else:
-        print(f"Local tarball already present: {local_tar}")
-
-    # Extract into /content/data/ — tarball top-level is openwebtext2/
-    os.makedirs("/content/data", exist_ok=True)
-    print(f"Extracting to /content/data/ ...")
-    subprocess.check_call(["tar", "xzf", local_tar, "-C", "/content/data/"])
-    print(f"[OK] Extraction complete.")
-
-    # Confirm expected layout
-    assert os.path.exists(TRAIN_BIN), (
-        f"[FAIL] {TRAIN_BIN} not found after extraction.\n"
-        f"Check tarball structure: expected openwebtext2/train.bin at top level.\n"
-        f"Inspect with: tar tzf {local_tar} | head -20"
+def _bootstrap_from_huggingface() -> None:
+    """Path C: build train.bin + val.bin from scratch via the cloned repo's
+    dataset helpers, then pack a tarball and upload it to Drive for future
+    runs. ONE-TIME op (~2-3h total: HF download + tokenisation). All
+    subsequent sessions skip to Path B."""
+    print(f"[BOOTSTRAP] No tarball at {DATA_TARBALL_PATH} — building dataset from scratch.")
+    print("            ONE-TIME op (~2-3h). Future runs will reuse the Drive tarball.")
+    sys.path.insert(0, REPO_DIR)
+    from data.openwebtext2 import (
+        cache_tiktoken_bpe,
+        download_openwebtext2,
+        extract_and_tokenize_openwebtext2,
     )
 
-# Final sanity listing
+    bin_dir = f"{DATA_DIR}/openwebtext2/"
+    os.makedirs(bin_dir, exist_ok=True)
+
+    print("[BOOTSTRAP 1/4] Warming tiktoken BPE cache (needs internet)...")
+    cache_tiktoken_bpe()
+
+    print("[BOOTSTRAP 2/4] Downloading OWT2 tarball from HuggingFace (~28GB)...")
+    download_openwebtext2(bin_dir)
+
+    print("[BOOTSTRAP 3/4] Extracting + tokenising -> train.bin + val.bin (CPU-bound; ~1-2h)...")
+    extract_and_tokenize_openwebtext2(bin_dir)
+
+    assert os.path.exists(TRAIN_BIN) and os.path.exists(VAL_BIN), (
+        f"[FAIL] Bootstrap produced incomplete output:\n"
+        f"  train.bin exists: {os.path.exists(TRAIN_BIN)}\n"
+        f"  val.bin   exists: {os.path.exists(VAL_BIN)}"
+    )
+
+    print("[BOOTSTRAP 4/4] Packing tarball and uploading to Drive...")
+    # Top-level dir = "openwebtext2/" — matches what _extract_local_tarball
+    # produces on Path B, so the layouts stay in lockstep.
+    subprocess.check_call(["tar", "czf", LOCAL_TAR, "-C", DATA_DIR, "openwebtext2/"])
+
+    drive_dir = os.path.dirname(DATA_TARBALL_PATH)
+    os.makedirs(drive_dir, exist_ok=True)
+    subprocess.check_call(["cp", LOCAL_TAR, DATA_TARBALL_PATH])
+
+    sha = _sha256_file(LOCAL_TAR)
+    sidecar = DATA_TARBALL_PATH + ".sha256"
+    with open(sidecar, "w") as f:
+        f.write(f"{sha}  {os.path.basename(DATA_TARBALL_PATH)}\n")
+
+    print(f"[OK] Bootstrap complete. Tarball + sidecar live on Drive at {DATA_TARBALL_PATH}")
+
+
+# ----- Dispatch -----
+if os.path.exists(TRAIN_BIN) and os.path.exists(VAL_BIN):
+    print(f"[OK] Dataset already staged at {DATA_DIR}/openwebtext2/ — skipping (Path A).")
+else:
+    print("Waiting for Drive mount to settle...")
+    if _wait_for_drive_tarball(timeout_s=60):
+        # Path B: tarball available on Drive
+        print(f"Found tarball: {DATA_TARBALL_PATH} (Path B)")
+        _verify_sha256_if_sidecar(DATA_TARBALL_PATH)
+
+        if not os.path.exists(LOCAL_TAR):
+            print(f"Copying tarball to local disk: {LOCAL_TAR}")
+            subprocess.check_call(["cp", DATA_TARBALL_PATH, LOCAL_TAR])
+        else:
+            print(f"Local tarball already present: {LOCAL_TAR}")
+
+        _extract_local_tarball(LOCAL_TAR)
+    else:
+        # Path C: tarball missing from Drive — bootstrap once, upload, future runs reuse
+        _bootstrap_from_huggingface()
+
+# ----- Final assertions: BOTH train.bin and val.bin required -----
+# data/openwebtext2.py:247 raises FileNotFoundError if either is missing,
+# so we fail fast here rather than 5 min into the training cell.
+assert os.path.exists(TRAIN_BIN), (
+    f"[FAIL] {TRAIN_BIN} not found after staging.\n"
+    f"Inspect: ls -lh {DATA_DIR}/openwebtext2/"
+)
+assert os.path.exists(VAL_BIN), (
+    f"[FAIL] {VAL_BIN} not found after staging — required by data/openwebtext2.py:247.\n"
+    f"Inspect: ls -lh {DATA_DIR}/openwebtext2/"
+)
+
+# Sanity listing
 result = subprocess.run(["ls", "-lh", f"{DATA_DIR}/openwebtext2"], capture_output=True, text=True)
 print(result.stdout)
-print(f"[OK] {TRAIN_BIN} present.")
+print("[OK] train.bin + val.bin present.")
 
 
 # %% tags=["verify-config"]
@@ -477,7 +562,9 @@ CALIB_EXP   = f"CALIB_{ABLATION}"
 CALIB_DIR   = f"/content/calib_{ABLATION}"
 os.makedirs(CALIB_DIR, exist_ok=True)
 
-# wandb intentionally disabled for calibration probe
+# wandb intentionally disabled for calibration probe.
+# Flags omitted because cotformer_full_depth ignores them:
+#   --min_repeat, --depth_random_method  (see params cell note)
 calib_cmd = (
     f"cd {REPO_DIR} && python ./main.py "
     f"--config_format base "
@@ -486,7 +573,6 @@ calib_cmd = (
     f"--n_head {N_HEAD} "
     f"--n_layer {cfg['n_layer']} "
     f"--n_repeat {cfg['n_repeat']} "
-    f"--min_repeat {cfg['min_repeat']} "
     f"--batch_size {cfg['batch_size']} "
     f"--acc_steps {cfg['acc_steps']} "
     f"--sequence_length 256 "
@@ -498,9 +584,8 @@ calib_cmd = (
     f"--lr 1e-3 "
     f"--weight_decay 0.1 "
     f"--warmup_percent 0.2 "
-    f"--eval_freq 100000 "    # no eval in 500-step probe → clean ms/step signal
+    f"--eval_freq 100000 "    # no eval in 500-step probe -> clean ms/step signal
     f"--seed 0 "
-    f"--depth_random_method uniform_random_range "
     f"--n_layer_begin 0 "
     f"--n_layer_end 0 "
     f"--save_checkpoint_freq 100000 "
@@ -557,7 +642,7 @@ else:
         print(f"     ls -lh /content/data/ — should show ~10GB+ of .bin files.")
         print(f"  2. Check nvidia-smi for thermal throttling (clock should be ~1410 MHz on A100).")
         print(f"  3. If VRAM is near limit, try batch_size=32 acc_steps=4 in the params cell.")
-        print(f"     (Effective batch stays 128, throughput drops ~1.4×.)")
+        print(f"     (Effective batch stays 128, throughput drops ~1.4x.)")
         print(f"  4. Do NOT use --compile — it is known-broken for cotformer_full_depth.")
     print(f"{'='*60}")
 
@@ -575,7 +660,6 @@ if not os.path.exists(MARKER):
         "n_head": N_HEAD,
         "n_layer": cfg["n_layer"],
         "n_repeat": cfg["n_repeat"],
-        "min_repeat": cfg["min_repeat"],
         "exp_name": EXP_NAME,
         "ablation": ABLATION,
         "first_started_at": datetime.datetime.now().isoformat(),
@@ -609,6 +693,11 @@ else:
 
 wandb_flags = WANDB_ARGS  # "" if no key, "--wandb --wandb_project rcotformer" otherwise
 
+# Hyperparameters match iridis/base-train/job-template.sh (paper section 3.2 SOT).
+# Flags omitted because cotformer_full_depth ignores them:
+#   --min_repeat, --depth_random_method  (see params cell note)
+# save_checkpoint_freq 2000: matches iridis SOT — 20 resume points over 40k
+# iters, halves Drive FUSE upload churn vs the previous 1000 setting.
 train_cmd = (
     f"cd {REPO_DIR} && python ./main.py "
     f"--config_format base "
@@ -617,7 +706,6 @@ train_cmd = (
     f"--n_head {N_HEAD} "
     f"--n_layer {cfg['n_layer']} "
     f"--n_repeat {cfg['n_repeat']} "
-    f"--min_repeat {cfg['min_repeat']} "
     f"--batch_size {cfg['batch_size']} "
     f"--acc_steps {cfg['acc_steps']} "
     f"--sequence_length 256 "
@@ -631,10 +719,9 @@ train_cmd = (
     f"--warmup_percent 0.2 "
     f"--eval_freq 100 "
     f"--seed 0 "
-    f"--depth_random_method uniform_random_range "
     f"--n_layer_begin 0 "
     f"--n_layer_end 0 "
-    f"--save_checkpoint_freq 1000 "
+    f"--save_checkpoint_freq 2000 "
     f"--remove_intermediary_checkpoints_at_end "
     f"--results_base_folder {RESULTS_BASE} "
     f"--exp_name {EXP_NAME} "
@@ -644,11 +731,10 @@ train_cmd = (
 )
 
 print(f"Training {ABLATION} | EXP_NAME={EXP_NAME}")
-print(f"Log → {LOG_FILE}")
+print(f"Log -> {LOG_FILE}")
 print(f"CMD: {train_cmd}\n")
 # Shell execution — streams output live via tee -a to Drive log
 get_ipython().system(train_cmd)
-
 
 
 # %% keep_output=true tags=["eval-ppl"]
@@ -706,57 +792,12 @@ else:
 print(f"{'='*60}")
 
 
-# %% keep_output=true tags=["regen-fig2"]
-# Regenerate Figure 2 (OPTIONAL — only runs if scripts/plot_fig2.py and required data exist)
-import os
-import subprocess
-import json
-
-FIG_SCRIPT = f"{REPO_DIR}/scripts/plot_fig2.py"
-RESULTS_TABLE = f"{REPO_DIR}/results_table1_fig2.json"
-MACS_FILE     = f"{REPO_DIR}/macs.json"
-FIG_OUTPUT_DIR = os.path.join(RESULTS_BASE, EXP_NAME, "figs")
-
-missing = []
-for label, path in [("plot script", FIG_SCRIPT), ("results table", RESULTS_TABLE), ("macs data", MACS_FILE)]:
-    if not os.path.exists(path):
-        missing.append(f"  {label}: {path}")
-
-if missing:
-    print(f"[SKIP] regen-fig2 skipped — missing prerequisites:")
-    for m in missing:
-        print(m)
-    print(f"  This is expected if results_table1_fig2.json / macs.json are not yet populated.")
-    print(f"  Update those files with the new {EXP_NAME} metrics, then re-run this cell.")
-else:
-    os.makedirs(FIG_OUTPUT_DIR, exist_ok=True)
-    fig_cmd = (
-        f"cd {REPO_DIR} && python scripts/plot_fig2.py "
-        f"--results {RESULTS_TABLE} "
-        f"--macs {MACS_FILE} "
-        f"--output-dir {FIG_OUTPUT_DIR}"
-    )
-    print(f"Regenerating Figure 2...")
-    print(f"CMD: {fig_cmd}")
-    result = subprocess.run(fig_cmd, shell=True, capture_output=True, text=True)
-    print(result.stdout)
-    if result.returncode != 0:
-        print(f"[WARN] plot_fig2.py exited {result.returncode}:")
-        print(result.stderr)
-    else:
-        for ext in ["png", "pdf"]:
-            for stem in ["fig2a", "fig2b"]:
-                fpath = os.path.join(FIG_OUTPUT_DIR, f"{stem}.{ext}")
-                if os.path.exists(fpath):
-                    print(f"  [OK] {fpath}")
-
-
-# %% [markdown] tags=["summary"]
+# %% [markdown] tags=["handoff"]
 # # Training Complete — Handoff Summary
 #
 # ## Results to report back
 #
-# After cell 12 (`eval-ppl`) completes, report:
+# After cell `eval-ppl` completes, report:
 #
 # 1. **PPL number** printed by the eval cell
 # 2. **Train log path** on Drive:
@@ -774,11 +815,32 @@ else:
 #         └── BaseCot_<ABLATION>/
 #             ├── ckpt.pt           ← final checkpoint
 #             ├── summary.json      ← training args + stats (includes n_head for provenance)
+#             ├── started.json      ← session marker (notebook-side quarantine gate)
 #             └── train.log         ← full training log (appended across resumes)
 # ```
 #
 # Note: intermediary `ckpt_<step>.pt` files are removed at end of training
 # (`--remove_intermediary_checkpoints_at_end`). Only `ckpt.pt` survives.
+#
+# ## Transferring to iridis for Figure 2 / Table 1 reproduction
+#
+# Figure 2 and Table 1 require ALL SEVEN BaseCot ablations evaluated together
+# (see `iridis/base-cots-eval/`). This notebook produces ONE ablation per run.
+#
+# The iridis eval job's pre-flight (`iridis/base-cots-eval/job.sh:84-97`)
+# requires BOTH files per ablation:
+# - `<CKPT_ROOT>/BaseCot_<N>L_<R>R/ckpt.pt`
+# - `<CKPT_ROOT>/BaseCot_<N>L_<R>R/summary.json`
+#
+# **Critical**: `summary.json` is written ONLY when training reaches 40000 iters
+# and `main.py` finishes cleanly (`main.py:225`). Mid-training resume cycles
+# produce `ckpt_<N>.pt` files but NO `summary.json`.
+#
+# **Do NOT rsync to iridis** until the eval cell prints `EVAL RESULT` AND
+# `summary.json` is present at `.../BaseCot_<ABLATION>/summary.json`.
+#
+# The Colab `EXP_NAME` (`BaseCot_24L_3R` etc.) is already the exact folder name
+# the iridis eval job expects under `CKPT_ROOT` — no rename needed.
 #
 # ## 24L_5R go/no-go
 #
@@ -812,6 +874,7 @@ else:
 # 1. Open the notebook fresh in Colab (File > Open notebook > GitHub > your fork).
 # 2. Confirm `ABLATION` and `REPO_URL` in cell 2 are still correct (they should persist via the .ipynb on GitHub).
 # 3. **Run All** (Ctrl+F9). Order matters and is automatic:
+#    - `stage-data` finds the tarball on Drive (Path B) — bootstrap (Path C) only fires on the very first run, never on resume.
 #    - `quarantine-check` reads `started.json` from Drive, validates `n_head==12` + `ablation` matches -> PASS.
 #    - `ckpt-integrity-check` finds the latest non-partial ckpt; demotes any `*.PARTIAL` siblings caused by interrupted writes.
 #    - `calibration` re-projects wall time (will project the REMAINING time, since main.py will resume).
@@ -823,4 +886,4 @@ else:
 # - Drive `.../{EXP_NAME}/ckpt_*.pt` step numbers are monotonically increasing.
 # - `train.log` line count grows (we use `tee -a`, never overwrite).
 # - `summary.json` appears ONLY after all 40k iters complete (don't worry if it's absent during training).
-#
+# - Drive `cotformer-data/owt2.tar.gz` (and `.sha256` sidecar) — present after first bootstrap; all future Colab sessions reuse it.
