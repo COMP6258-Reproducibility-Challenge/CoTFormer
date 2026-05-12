@@ -7,6 +7,10 @@
 #       format_name: percent
 #       format_version: '1.3'
 #       jupytext_version: 1.19.2
+#   kernelspec:
+#     display_name: Python 3 (ipykernel)
+#     language: python
+#     name: python3
 # ---
 
 # %% tags=["notebook-runtime-probe"]
@@ -178,7 +182,7 @@ else:
 
 
 # %% tags=["gpu-assert"]
-# Assert A100 GPU and sufficient system RAM — hard-fail on any deviation
+# Assert A100 GPU | G4 Runtime and sufficient system RAM — hard-fail on any deviation
 import subprocess
 import sys
 
@@ -190,7 +194,7 @@ if "google.colab" in __import__("sys").modules:
     print(f"GPU detected: {result}")
     gpu_name = result.split(",")[0].strip()
     vram_str = result.split(",")[1].strip() if "," in result else "unknown"
-    if "A100" not in gpu_name:
+    if "A100" not in gpu_name and "6000 Blackwell" not in gpu_name:
         raise RuntimeError(
             f"\n\n[HARD FAIL] Expected A100 but got: {gpu_name}\n"
             f"You are on a Colab Pro+ session but NOT assigned an A100.\n"
@@ -255,7 +259,9 @@ print(f"[OK] Requirements installed from {req_path}")
 #   C. Tarball MISSING    -> bootstrap: download HF OWT2 (~28GB), tokenise,
 #                            write train.bin + val.bin locally, then PACK and
 #                            COPY the tarball to Drive (with sha256 sidecar)
-#                            for future runs. ONE-TIME op only.
+#                            for future runs. Then HARD-HALT the notebook —
+#                            user must re-run from top to hit Path B and
+#                            proceed to training. ONE-TIME op only.
 #
 # Tarball layout: openwebtext2/{train.bin, val.bin}  (top-level = "openwebtext2")
 import os
@@ -363,13 +369,45 @@ def _bootstrap_from_huggingface() -> None:
     print(f"[OK] Bootstrap complete. Tarball + sidecar live on Drive at {DATA_TARBALL_PATH}")
 
 
+def _halt_after_bootstrap() -> None:
+    """Path C only: print a clear banner and stop Run All so the user must
+    consciously re-run the notebook before training fires. Prevents the
+    bootstrap+train sequence from monopolising a single 12h+ session with
+    a half-untested dataset, and gives the user a chance to verify the
+    Drive tarball before committing GPU time to it."""
+    tar_path = DATA_TARBALL_PATH
+    banner = "=" * 70
+    print()
+    print(banner)
+    print("  BOOTSTRAP COMPLETE — NOTEBOOK HALTING HERE")
+    print(banner)
+    print()
+    print(f"  Tarball:        {tar_path}")
+    print(f"  sha256 sidecar: {tar_path}.sha256")
+    print()
+    print("  This is a deliberate stop. Path C is a one-time op; downstream")
+    print("  cells (sanity-check, calibration, training) must NOT run in the")
+    print("  same session that built the dataset.")
+    print()
+    print("  Next steps:")
+    print("    1. (Optional) Spot-check the tarball appears in Drive UI:")
+    print(f"         right-click {os.path.dirname(tar_path)}/owt2.tar.gz")
+    print("    2. Runtime > Disconnect and delete runtime  (frees the A100).")
+    print("    3. Re-open this notebook, reconnect to A100, Runtime > Run all.")
+    print("       Path B will fire (Drive copy, ~3 min) and training will start.")
+    print(banner)
+    # SystemExit halts cell execution AND prevents Run All from advancing.
+    # Kernel stays alive (so the user can inspect state if they want).
+    raise SystemExit("Path C bootstrap done — re-run notebook to proceed to training.")
+
+
 # ----- Dispatch -----
 if os.path.exists(TRAIN_BIN) and os.path.exists(VAL_BIN):
     print(f"[OK] Dataset already staged at {DATA_DIR}/openwebtext2/ — skipping (Path A).")
 else:
     print("Waiting for Drive mount to settle...")
     if _wait_for_drive_tarball(timeout_s=60):
-        # Path B: tarball available on Drive
+        # Path B: tarball available on Drive — proceed to extract and continue
         print(f"Found tarball: {DATA_TARBALL_PATH} (Path B)")
         _verify_sha256_if_sidecar(DATA_TARBALL_PATH)
 
@@ -381,10 +419,14 @@ else:
 
         _extract_local_tarball(LOCAL_TAR)
     else:
-        # Path C: tarball missing from Drive — bootstrap once, upload, future runs reuse
+        # Path C: tarball missing — bootstrap once, upload, then HALT.
+        # Downstream cells do NOT auto-run; user must re-run notebook.
         _bootstrap_from_huggingface()
+        _halt_after_bootstrap()
+        # _halt_after_bootstrap raises SystemExit; lines below are unreachable.
 
 # ----- Final assertions: BOTH train.bin and val.bin required -----
+# Only reached on Path A or Path B (Path C halts above).
 # data/openwebtext2.py:247 raises FileNotFoundError if either is missing,
 # so we fail fast here rather than 5 min into the training cell.
 assert os.path.exists(TRAIN_BIN), (
