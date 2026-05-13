@@ -22,17 +22,17 @@
 
 TASK="${TASK:-phop_p32_seq256_a4_final}"
 N_GPUS=2
-N_LAYER=1
+N_LAYER=3
 N_REPEAT=4
-N_LAYER_BEGIN=0
-N_LAYER_END=0
+N_LAYER_BEGIN=1
+N_LAYER_END=1
 N_EMBD="${N_EMBD:-128}"
 N_HEAD="${N_HEAD:-8}"
-ITERATIONS="${ITERATIONS:-250000}"
+ITERATIONS="${ITERATIONS:-300000}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
 ACC_STEPS="${ACC_STEPS:-4}"
-CKPT_FREQ="${CKPT_FREQ:-4000}"
-EVAL_FREQ="${EVAL_FREQ:-4000}"
+CKPT_FREQ="${CKPT_FREQ:-8000}"
+EVAL_FREQ="${EVAL_FREQ:-8000}"
 TRAIN_SPLIT="${TRAIN_SPLIT:-train_constructive}"
 EVAL_SPLITS="${EVAL_SPLITS:-val_constructive test_constructive}"
 BEST_SPLIT="${BEST_SPLIT:-val_constructive}"
@@ -40,6 +40,9 @@ BIG_EVAL_SPLITS="${BIG_EVAL_SPLITS:-val_constructive test_constructive}"
 BIG_EVAL_MAX_BATCHES="${BIG_EVAL_MAX_BATCHES:-}"
 SEED="${SEED:-0}"
 BEST_METRIC="${BEST_METRIC:-acc}"
+N_MID=$((N_LAYER - N_LAYER_BEGIN - N_LAYER_END))
+EFFECTIVE_DEPTH=$((N_LAYER_BEGIN + N_MID * N_REPEAT + N_LAYER_END))
+ARCH="${N_LAYER_BEGIN}-${N_MID}x${N_REPEAT}-${N_LAYER_END}"
 
 
 # ========================= END CONFIGURATION ================================
@@ -59,6 +62,8 @@ if [ -z "$SLURM_JOB_ID" ]; then
     echo "  Seed:      $SEED"
     echo "  Best:      $BEST_SPLIT.$BEST_METRIC"
     echo "  Big eval:  $BIG_EVAL_SPLITS"
+    echo "  Layers:    ${N_LAYER} template / ${EFFECTIVE_DEPTH} effective (${ARCH})"
+    echo " Architecture:  ${EFFECTIVE_DEPTH} effective layers (${ARCH}; template ${N_LAYER}L)"
     echo "  Width:     d=$N_EMBD h=$N_HEAD"
     echo "  Layers:    $N_LAYER (${N_LAYER_BEGIN}+mid*${N_REPEAT}+${N_LAYER_END})"
     echo "  Steps:     $ITERATIONS"
@@ -121,6 +126,8 @@ echo " Eval splits:   $EVAL_SPLITS"
 echo " Seed:          $SEED"
 echo " Best metric:   $BEST_SPLIT.$BEST_METRIC"
 echo " Big eval:      $BIG_EVAL_SPLITS"
+echo "  Layers:    ${N_LAYER} template / ${EFFECTIVE_DEPTH} effective (${ARCH})"
+echo " Architecture:  ${EFFECTIVE_DEPTH} effective layers (${ARCH}; template ${N_LAYER}L)"
 echo " Model:         fixed_cot_attn"
 echo " Width:         d=$N_EMBD h=$N_HEAD"
 echo " Architecture:  ${N_LAYER}L (${N_LAYER_BEGIN}->mid*${N_REPEAT}->${N_LAYER_END})"
@@ -178,7 +185,7 @@ TRAIN_ARGS=(
     --eval_freq "$EVAL_FREQ"
     --seed "$SEED"
     --results_base_folder "$EXPS_DIR"
-    --exp_name "bestchckp_test_constructive_phop_${TASK}_fixed_cot_attn_${N_LAYER}layer_${N_REPEAT}repeat_d${N_EMBD}_h${N_HEAD}_bs${BATCH_SIZE}x${ACC_STEPS}_seed${SEED}"
+    --exp_name "phop_${TASK}_fixed_cot_attn_${ARCH}_${EFFECTIVE_DEPTH}eff_d${N_EMBD}_h${N_HEAD}_bs${BATCH_SIZE}x${ACC_STEPS}_seed${SEED}"
     --use_pretrained auto
     --phop_task "$TASK"
     --phop_data_root "$DATA_DIR/p-hop"
