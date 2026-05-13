@@ -20,7 +20,7 @@
 
 # ========================= CONFIGURATION ====================================
 
-TASK="${TASK:-phop_p8_seq256_a4_final}"
+TASK="${TASK:-phop_p32_seq256_a4_final}"
 MODEL_NAME="base"
 N_GPUS="${N_GPUS:-2}"
 CPUS_PER_TASK="${CPUS_PER_TASK:-16}"
@@ -187,7 +187,7 @@ TRAIN_ARGS=(
     --eval_freq "$EVAL_FREQ"
     --seed "$SEED"
     --results_base_folder "$EXPS_DIR"
-    --exp_name "constructive_phop_${TASK}_${MODEL_NAME}_${N_LAYER}layer_d${N_EMBD}_h${N_HEAD}_bs${BATCH_SIZE}x${ACC_STEPS}_seed${SEED}"
+    --exp_name "base_constructive_phop_${TASK}_${MODEL_NAME}_${N_LAYER}layer_d${N_EMBD}_h${N_HEAD}_bs${BATCH_SIZE}x${ACC_STEPS}_seed${SEED}"
     --use_pretrained auto
     --phop_task "$TASK"
     --phop_data_root "$DATA_DIR/p-hop"

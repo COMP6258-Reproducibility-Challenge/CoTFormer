@@ -20,10 +20,10 @@
 
 # ========================= CONFIGURATION ====================================
 
-TASK="${TASK:-phop_p8_seq256_a4_final}"
+TASK="${TASK:-phop_p32_seq256_a4_final}"
 N_GPUS=2
 N_LAYER=1
-N_REPEAT=7
+N_REPEAT=4
 N_LAYER_BEGIN=0
 N_LAYER_END=0
 N_EMBD="${N_EMBD:-128}"
