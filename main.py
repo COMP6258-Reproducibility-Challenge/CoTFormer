@@ -158,8 +158,12 @@ def main(args):
             # the new weights_only=True default. RNG restore is load-bearing for resume
             # reproducibility (see optim/base.py:65-80) — we trust our own checkpoints.
             checkpoint = torch.load(os.path.join(ckpt_path, last_ckpt_path), map_location=args.device, weights_only=False)
-        except (RuntimeError, EOFError) as e:
-            print(f"WARN: Corrupted checkpoint {last_ckpt_path}: {e}")
+        except (RuntimeError, EOFError, TypeError, ImportError, ModuleNotFoundError, AttributeError) as e:
+            # RuntimeError/EOFError → bytes corruption (Drive FUSE partial write).
+            # TypeError/ImportError/ModuleNotFoundError/AttributeError → version drift
+            # between save and load env (numpy minor-version pickle incompat is the
+            # canonical case). Either way: graceful fresh-start beats hard crash.
+            print(f"WARN: Could not load checkpoint {last_ckpt_path}: {type(e).__name__}: {e}")
             print("Starting fresh.")
             args.use_pretrained = None
 
