@@ -131,9 +131,13 @@ def main() -> None:
         "--ylim",
         nargs=2,
         type=float,
-        default=None,
+        default=(24.0, 45.0),
         metavar=("YMIN", "YMAX"),
-        help="Override y-axis bounds (PPL). Default: auto-fit with paper targets visible.",
+        help=(
+            "Y-axis bounds (PPL). Default (24, 45) clips the warmup spike so "
+            "the convergence region around paper targets is readable. Pass "
+            "--ylim 0 5500 to see the full warmup."
+        ),
     )
     parser.add_argument(
         "--xlim",
@@ -268,6 +272,34 @@ def main() -> None:
         resume_s = str(traj["use_pretrained"]) if traj["use_pretrained"] else "fresh"
         print(f"{abl:<22s} {final:>10.3f} {paper_s:>8s} {gap_s:>7s} "
               f"{iter_range:>16s} {resume_s:>15s}")
+
+    # ---- Health checkpoints: val_pp at standardised iter milestones ----
+    # These derive empirically from the loaded trajectories. Useful as
+    # early-warning thresholds when monitoring a future retrain run.
+    print()
+    print("HEALTH CHECKPOINTS (val_pp at standard iter milestones):")
+    milestones = [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000]
+    header = f"{'ABLATION':<22s} " + " ".join(f"{m:>7d}" for m in milestones)
+    print(header)
+    print("-" * len(header))
+    for abl, traj in trajectories.items():
+        if not traj["val_pp"]:
+            continue
+        row = f"{abl:<22s} "
+        for m in milestones:
+            # Find the eval data point closest to milestone m (within ±eval_freq).
+            best = None
+            best_d = traj["eval_freq"]
+            for it, pp in zip(traj["iters"], traj["val_pp"]):
+                d = abs(it - m)
+                if d <= best_d:
+                    best, best_d = pp, d
+            row += f"{best:>7.2f} " if best is not None else f"{'--':>7s} "
+        print(row)
+    print()
+    print("Use the working ablations' columns above as a sanity floor when")
+    print("monitoring a retrain. If the new run's val_pp at iter 10000 exceeds")
+    print("the working ablations' value by >2 PPL, the trajectory is off.")
 
 
 if __name__ == "__main__":

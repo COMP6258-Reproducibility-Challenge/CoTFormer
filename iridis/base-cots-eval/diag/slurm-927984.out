@@ -1,0 +1,73 @@
+Running SLURM prolog script on ecsai04
+===============================================================================
+Job started on Thu May 14 15:49:00 BST 2026
+Job ID          : 927984
+Job name        : diag_b_nhead
+WorkDir         : /iridisfs/home/ab3u21/CoTFormer/iridis/base-cots-eval/diag
+Command         : /home/ab3u21/CoTFormer/iridis/base-cots-eval/diag/diag_b_job.sh
+Partition       : ecsstudents_l4
+Num hosts       : 1
+Num cores       : 4
+Num of tasks    : 1
+Hosts allocated : ecsai04
+Job Output Follows ...
+===============================================================================
+WARNING: REPO_DIR not set -- falling back to /home/ab3u21/CoTFormer
+=========================================
+ Diag B -- n_head hot-swap on ecsai04
+ Job ID:        927984
+ Started:       Thu May 14 15:49:00 BST 2026
+ DIAG_ARGS:     <none>
+=========================================
+
+GPU Info:
+0, NVIDIA L4, 23034 MiB, 590.48.01
+
+Disabling PyTorch because PyTorch >= 2.4 is required but found 2.2.0+cu118
+PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+Probing /scratch/ab3u21/exps/owt2/cotformer_full_depth/BaseCot_12L_5R
+  summary claims n_head = 12
+  alternate probe       = 24
+
+Probing claimed n_head=12...
+number of parameters: 123.59M
+  WARN n_head=12: missing keys in model (first 5): ['transformer.wpe.freqs', 'transformer.h_mid.0.attn.bias', 'transformer.h_mid.1.attn.bias', 'transformer.h_mid.2.attn.bias', 'transformer.h_mid.3.attn.bias']
+  PPL = 31.827
+
+Probing alternate n_head=24...
+number of parameters: 123.59M
+  WARN n_head=24: missing keys in model (first 5): ['transformer.wpe.freqs', 'transformer.h_mid.0.attn.bias', 'transformer.h_mid.1.attn.bias', 'transformer.h_mid.2.attn.bias', 'transformer.h_mid.3.attn.bias']
+  PPL = 213.149
+
+============================================================
+RESULT  n_head=12  -> PPL=31.827
+        n_head=24  -> PPL=213.149
+        ratio (alt / claimed) = 6.697x
+
+Interpretation: weights were genuinely trained at n_head=12.
+                The alternate config is catastrophically worse, as expected
+                if summary.json tells the truth. Cause is NOT n_head.
+
+=========================================
+ Diag B complete: Thu May 14 15:49:32 BST 2026
+=========================================
+==============================================================================
+Running epilogue script on ecsai04.
+
+Submit time  : 2026-05-14T15:49:00
+Start time   : 2026-05-14T15:49:00
+End time     : 2026-05-14T15:49:32
+Elapsed time : 00:00:32 (Timelimit=00:15:00)
+
+Job ID: 927984
+Cluster: iridis_x
+User/Group: ab3u21/fp
+State: COMPLETED (exit code 0)
+Nodes: 1
+Cores per node: 4
+CPU Utilized: 00:00:18
+CPU Efficiency: 14.06% of 00:02:08 core-walltime
+Job Wall-clock time: 00:00:32
+Memory Utilized: 2.25 GB
+Memory Efficiency: 7.04% of 32.00 GB (32.00 GB/node)
+
