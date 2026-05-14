@@ -61,16 +61,19 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Ensure repo root is on sys.path BEFORE any project import. When invoked
+    # as `python diag/diag_b_nhead_hotswap.py` Python only adds the script's
+    # directory to sys.path, not the CWD -- so `import models` fails without
+    # this fix.
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
     # Late imports so --help works without GPU.
     import math
     import numpy as np
     import torch
     import models
-
-    # Ensure repo root is on sys.path when invoked from anywhere.
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
 
     if not torch.cuda.is_available():
         sys.exit("ERROR: CUDA required for this probe.")
