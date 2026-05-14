@@ -1,0 +1,22 @@
+\begin{table}[t]
+  \centering
+  \caption{\textbf{Performance of CoTFormer, Block Universal Transformer and Standard Transformers on OpenWebText2.} Paper rows report SEM over 3 seeds. Our rows (CoTFormer ours) report per-batch CI95-half from a single seed (see reprod-notes \S A8 for statistical interpretation).}
+  \label{tab:table1}
+  \begin{tabular}{lc ccc}
+    \toprule
+    Model & Base Layers ($n_{\mathrm{layer}}$) & $n_{\mathrm{repeat}}=2$ & $n_{\mathrm{repeat}}=3$ & $n_{\mathrm{repeat}}=5$ \\
+    \midrule
+    Standard & 12 & 28.39(0.01) & — & — \\
+    Block Universal Transformer & 12 & 27.74(0.01) & 27.47(0.01) & 27.15(0.02) \\
+    \textbf{CoTFormer (ours)} & 12 & \textbf{27.53(±0.67)} & \textbf{27.05(±0.65)} & \textbf{30.48(±0.59)} \\
+    CoTFormer (paper) & 12 & 27.55(0.02) & 27.07(0.01) & 26.64(0.04) \\
+    \midrule
+    Standard & 24 & 25.93(0.02) & — & — \\
+    Block Universal Transformer & 24 & 25.47(0.00) & 25.19(0.03) & 24.95(0.01) \\
+    \textbf{CoTFormer (ours)} & 24 & \textbf{25.28(±0.61)} & \textbf{24.82(±0.59)} & \textbf{24.42(±0.58)} \\
+    CoTFormer (paper) & 24 & 25.28(0.00) & 24.85(0.04) & 24.48(0.03) \\
+    \midrule
+    Standard & 48 & 24.17(0.00) & — & — \\
+    \bottomrule
+  \end{tabular}
+\end{table}
