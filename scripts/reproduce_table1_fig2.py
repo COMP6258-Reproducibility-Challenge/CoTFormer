@@ -155,6 +155,7 @@ def _run_eval_for_ablation(
     output_dir: str,
     eval_log_dir: str | None,
     batch_size: int | None,
+    data_dir_override: str | None,
 ) -> dict[str, Any]:
     """Run eval.main() for a single ablation checkpoint.
 
@@ -176,7 +177,14 @@ def _run_eval_for_ablation(
     if batch_size is not None:
         eval_args += ["--batch_size", str(batch_size)]
 
-    stats = eval_module.main(eval_module.get_args(eval_args))
+    # eval.py:45-52 unconditionally hydrates summary['args'] onto the namespace.
+    # Colab-retrained ablations have data_dir='/content/data' baked in — useless
+    # and detrimental on iridis. Override AFTER get_args, BEFORE main().
+    parsed = eval_module.get_args(eval_args)
+    if data_dir_override is not None:
+        parsed.data_dir = data_dir_override
+
+    stats = eval_module.main(parsed)
     return stats
 
 
@@ -267,6 +275,17 @@ def main() -> None:
         type=int,
         help="Override batch size for eval (default: use checkpoint summary value).",
     )
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        type=str,
+        help=(
+            "Override data_dir at eval time. Required when checkpoints were "
+            "trained on a different host (e.g. Colab '/content/data') and the "
+            "summary.json bakes in a path that does not exist on the eval host. "
+            "If unset, eval.py hydrates data_dir from summary['args'] verbatim."
+        ),
+    )
     args = parser.parse_args()
 
     # Validate ablation names up-front before any GPU work.
@@ -296,6 +315,7 @@ def main() -> None:
             output_dir=args.output_dir,
             eval_log_dir=args.eval_log_dir,
             batch_size=args.batch_size,
+            data_dir_override=args.data_dir,
         )
 
         # Read the checkpoint's summary.json for seed and sequence_length metadata.

@@ -183,6 +183,7 @@ python scripts/reproduce_table1_fig2.py \
     --output-dir "$RUN_DIR/json/" \
     --macs-json "$RUN_DIR/json/macs.json" \
     --eval-log-dir "$RUN_DIR/eval_logs/" \
+    --data-dir "/scratch/ab3u21/datasets" \
     2>&1 | tee "$RUN_DIR/eval_logs/reproduce_table1_fig2.log"
 
 echo "  Results written to $RUN_DIR/json/"
