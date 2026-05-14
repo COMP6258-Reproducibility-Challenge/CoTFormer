@@ -18,7 +18,10 @@ conda activate /scratch/ab3u21/cotformer-env
 bash iridis/base-cots-eval/diag/run_all.sh
 ```
 
-Outputs `./diag_<timestamp>.log` in CWD. rsync that file back for review.
+Outputs `./diag_<timestamp>.log` in CWD with Diag A + Diag C inline. Diag B
+requires CUDA -- on login nodes `run_all.sh` auto-submits it as a SLURM job
+(`diag/diag_b_<jobid>.out` in the diag dir). On compute nodes with a GPU it
+runs in-process.
 
 ## Run individually
 
@@ -29,7 +32,18 @@ python iridis/base-cots-eval/diag/diag_a_args_diff.py
 # Diag C -- state_dict structural audit (~30s, no GPU)
 python iridis/base-cots-eval/diag/diag_c_state_dict_audit.py
 
-# Diag B -- n_head hot-swap PPL probe (~1 min, CUDA required)
+# Diag B -- n_head hot-swap PPL probe (~5 min queue + ~1 min wall, GPU job)
+sbatch iridis/base-cots-eval/diag/diag_b_job.sh
+# Output: iridis/base-cots-eval/diag/diag_b_<job_id>.out
+# Track:  squeue -u $USER
+```
+
+Alternatively for interactive GPU debugging (skip the queue):
+```bash
+srun --partition=ecsstudents_l4 --account=ecsstudents --gres=gpu:1 \
+     --cpus-per-task=4 --mem=32G --time=00:15:00 --pty bash
+# Then on the GPU node:
+conda activate /scratch/ab3u21/cotformer-env
 python iridis/base-cots-eval/diag/diag_b_nhead_hotswap.py
 ```
 

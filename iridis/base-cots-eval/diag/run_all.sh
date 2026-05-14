@@ -59,10 +59,33 @@ run_diag "Diag C -- state_dict audit" \
         --failing  "$FAILING" \
         --working  "$WORKING"
 
-run_diag "Diag B -- n_head hot-swap (requires CUDA + repo root on cwd)" \
-    python "$DIAG_DIR/diag_b_nhead_hotswap.py" \
+# --- Diag B requires GPU. Detect node type and dispatch accordingly. ---
+echo ""                                                                 | tee -a "$LOG"
+echo "---------------- Diag B -- n_head hot-swap ----------------"      | tee -a "$LOG"
+
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    echo "GPU detected on this node ($(hostname)) -- running Diag B directly." | tee -a "$LOG"
+    echo ""                                                             | tee -a "$LOG"
+    run_diag "Diag B (in-process)" \
+        python "$DIAG_DIR/diag_b_nhead_hotswap.py" \
+            --ckpt-dir "$CKPT_ROOT/$FAILING" \
+            --data-dir "$DATA_DIR"
+else
+    echo "No GPU on $(hostname) (login node?). Submitting Diag B as SLURM job:" | tee -a "$LOG"
+    echo "+ sbatch $DIAG_DIR/diag_b_job.sh --ckpt-dir $CKPT_ROOT/$FAILING --data-dir $DATA_DIR" | tee -a "$LOG"
+    echo ""                                                             | tee -a "$LOG"
+    SBATCH_OUT="$(sbatch "$DIAG_DIR/diag_b_job.sh" \
         --ckpt-dir "$CKPT_ROOT/$FAILING" \
-        --data-dir "$DATA_DIR"
+        --data-dir "$DATA_DIR" 2>&1)"
+    echo "$SBATCH_OUT"                                                  | tee -a "$LOG"
+    JOB_ID="$(echo "$SBATCH_OUT" | awk '{print $NF}')"
+    echo ""                                                             | tee -a "$LOG"
+    echo "Diag B submitted. When it finishes (~5 min queue + ~1 min wall) read:" | tee -a "$LOG"
+    echo "  $DIAG_DIR/diag_b_${JOB_ID}.out" | tee -a "$LOG"
+    echo "  $DIAG_DIR/diag_b_${JOB_ID}.err" | tee -a "$LOG"
+    echo ""                                                             | tee -a "$LOG"
+    echo "Track with:  squeue -u \$USER -j $JOB_ID" | tee -a "$LOG"
+fi
 
 echo ""                                                                 | tee -a "$LOG"
 echo "================================================================" | tee -a "$LOG"

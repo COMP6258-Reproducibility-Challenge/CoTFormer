@@ -109,10 +109,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--summary-root",
-        default=".",
+        default="/scratch/ab3u21/exps/owt2/cotformer_full_depth",
         help=(
             "Root directory containing one subdirectory per ablation, each with "
-            "a summary.json. Default: current working directory."
+            "a summary.json. Default: the iridis canonical ckpt root (works "
+            "directly when run on iridis). For local plotting, rsync the "
+            "summaries to a local mirror and pass --summary-root ./mirror."
         ),
     )
     parser.add_argument(
