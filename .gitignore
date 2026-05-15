@@ -8,6 +8,7 @@
 
 # Ignore local papers as well
 *.pdf
+!Reproducibility_Report.pdf
 
 # Ignore all checkpoints
 *.pt
