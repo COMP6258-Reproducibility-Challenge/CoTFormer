@@ -1,0 +1,127 @@
+Running SLURM prolog script on ecsai06
+===============================================================================
+Job started on Thu May 14 16:09:03 BST 2026
+Job ID          : 928016
+Job name        : diag_d_phase1
+WorkDir         : /iridisfs/home/ab3u21/CoTFormer
+Command         : /iridisfs/home/ab3u21/CoTFormer/iridis/base-cots-eval/diag/diag_d_job.sh
+Partition       : ecsstudents_l4
+Num hosts       : 1
+Num cores       : 4
+Num of tasks    : 1
+Hosts allocated : ecsai06
+Job Output Follows ...
+===============================================================================
+=========================================
+ Diag D on ecsai06, job 928016
+ Started: Thu May 14 16:09:03 BST 2026
+ DIAG_ARGS: <none>
+=========================================
+0, NVIDIA L4, 23034 MiB
+
+Disabling PyTorch because PyTorch >= 2.4 is required but found 2.2.0+cu118
+PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+Probing 3 ablations x 9 milestones
+Sample: 50 batches x 8 seq -> 102,400 tokens per probe
+
+--- BaseCot_12L_2R ---
+number of parameters: 123.59M
+  ckpt_6000.pt          (iter  6000) -> PPL = 55.838
+number of parameters: 123.59M
+  ckpt_10000.pt         (iter 10000) -> PPL = 43.663
+number of parameters: 123.59M
+  ckpt_14000.pt         (iter 14000) -> PPL = 38.914
+number of parameters: 123.59M
+  ckpt_20000.pt         (iter 20000) -> PPL = 34.901
+number of parameters: 123.59M
+  ckpt_26000.pt         (iter 26000) -> PPL = 32.064
+number of parameters: 123.59M
+  ckpt_26000.pt         (iter 26000) -> PPL = 32.064
+number of parameters: 123.59M
+  ckpt_30000.pt         (iter 30000) -> PPL = 30.155
+number of parameters: 123.59M
+  ckpt_34000.pt         (iter 34000) -> PPL = 28.661
+number of parameters: 123.59M
+  ckpt_40000.pt         (iter 40000) -> PPL = 27.419
+
+--- BaseCot_12L_3R ---
+number of parameters: 123.59M
+  ckpt_6000.pt          (iter  6000) -> PPL = 55.600
+number of parameters: 123.59M
+  ckpt_10000.pt         (iter 10000) -> PPL = 43.033
+number of parameters: 123.59M
+  ckpt_14000.pt         (iter 14000) -> PPL = 38.321
+number of parameters: 123.59M
+  ckpt_20000.pt         (iter 20000) -> PPL = 34.383
+number of parameters: 123.59M
+  ckpt_26000.pt         (iter 26000) -> PPL = 31.659
+number of parameters: 123.59M
+  ckpt_26000.pt         (iter 26000) -> PPL = 31.659
+number of parameters: 123.59M
+  ckpt_30000.pt         (iter 30000) -> PPL = 29.469
+number of parameters: 123.59M
+  ckpt_34000.pt         (iter 34000) -> PPL = 28.181
+number of parameters: 123.59M
+  ckpt_40000.pt         (iter 40000) -> PPL = 26.904
+
+--- BaseCot_12L_5R ---
+number of parameters: 123.59M
+  ckpt_5000.pt          (iter  5000) -> PPL = 59.897
+number of parameters: 123.59M
+  ckpt_10000.pt         (iter 10000) -> PPL = 42.601
+number of parameters: 123.59M
+  ckpt_15000.pt         (iter 15000) -> PPL = 39.391
+number of parameters: 123.59M
+  ckpt_20000.pt         (iter 20000) -> PPL = 38.083
+number of parameters: 123.59M
+  ckpt_25000.pt         (iter 25000) -> PPL = 35.824
+number of parameters: 123.59M
+  ckpt_26000.pt         (iter 26000) -> PPL = 35.385
+number of parameters: 123.59M
+  ckpt_30000.pt         (iter 30000) -> PPL = 33.376
+number of parameters: 123.59M
+  ckpt_35000.pt         (iter 35000) -> PPL = 31.691
+number of parameters: 123.59M
+  ckpt_40000.pt         (iter 40000) -> PPL = 30.745
+
+
+================================================================================
+PHASE-1 TRAJECTORY RECONSTRUCTION  (val PPL per iter milestone)
+================================================================================
+ABLATION                   5000    10000    15000    20000    25000    26000    30000    35000    40000
+-------------------------------------------------------------------------------------------------------
+BaseCot_12L_2R            55.84    43.66    38.91    34.90    32.06    32.06    30.16    28.66    27.42 
+BaseCot_12L_3R            55.60    43.03    38.32    34.38    31.66    31.66    29.47    28.18    26.90 
+BaseCot_12L_5R            59.90    42.60    39.39    38.08    35.82    35.39    33.38    31.69    30.74 
+
+Interpretation guide:
+  - If 12L_5R sits 3+ PPL above 12L_2R/3R at ALL milestones:
+      => systematic Phase 1 degradation (config/env)
+  - If 12L_5R matches siblings until iter X, then jumps:
+      => pinpoint event at iter X (NaN spike / hw glitch)
+  - If 12L_5R matches siblings throughout (incl iter 25000-26000):
+      => save-side or resume-side issue at the iter 26000 boundary
+
+=========================================
+ Diag D complete: Thu May 14 16:12:04 BST 2026
+=========================================
+==============================================================================
+Running epilogue script on ecsai06.
+
+Submit time  : 2026-05-14T16:09:02
+Start time   : 2026-05-14T16:09:03
+End time     : 2026-05-14T16:12:04
+Elapsed time : 00:03:01 (Timelimit=00:30:00)
+
+Job ID: 928016
+Cluster: iridis_x
+User/Group: ab3u21/fp
+State: COMPLETED (exit code 0)
+Nodes: 1
+Cores per node: 4
+CPU Utilized: 00:02:39
+CPU Efficiency: 21.96% of 00:12:04 core-walltime
+Job Wall-clock time: 00:03:01
+Memory Utilized: 2.11 GB
+Memory Efficiency: 6.59% of 32.00 GB (32.00 GB/node)
+
